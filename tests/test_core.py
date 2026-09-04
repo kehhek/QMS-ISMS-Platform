@@ -64,29 +64,33 @@ class CorrectiveActionTests(TestCase):
 
 
 class CoreApiPermissionTests(TestCase):
-    def test_authenticated_user_without_group_cannot_create_audit(self):
+    def test_member_without_required_role_cannot_write_but_can_read(self):
         tenant = make_tenant('coretestpermdeny')
         with schema_context(tenant.schema_name):
             from django.contrib.auth import get_user_model
+            from tenants.models import Membership
             User = get_user_model()
             user = User.objects.create_user('plain_user', 'plain@example.com', 'pass12345')
+            Membership.objects.create(user=user, tenant=tenant, role=Membership.Role.USER)
 
         api = APIClient()
         api.force_authenticate(user=user)
-        response = api.post(
+        write_response = api.post(
             '/api/audits/', {'title': 'New audit'}, HTTP_HOST=f'{tenant.schema_name}.localhost',
         )
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(write_response.status_code, 403)
 
-    def test_group_member_can_create_audit(self):
+        read_response = api.get('/api/documents/', HTTP_HOST=f'{tenant.schema_name}.localhost')
+        self.assertEqual(read_response.status_code, 200)
+
+    def test_auditor_role_can_create_audit(self):
         tenant = make_tenant('coretestpermallow')
         with schema_context(tenant.schema_name):
             from django.contrib.auth import get_user_model
-            from django.contrib.auth.models import Group
+            from tenants.models import Membership
             User = get_user_model()
             user = User.objects.create_user('auditor_user', 'auditor@example.com', 'pass12345')
-            group, _ = Group.objects.get_or_create(name='Auditors')
-            user.groups.add(group)
+            Membership.objects.create(user=user, tenant=tenant, role=Membership.Role.AUDITOR)
 
         api = APIClient()
         api.force_authenticate(user=user)
@@ -94,6 +98,32 @@ class CoreApiPermissionTests(TestCase):
             '/api/audits/', {'title': 'New audit'}, HTTP_HOST=f'{tenant.schema_name}.localhost',
         )
         self.assertEqual(response.status_code, 201)
+
+    def test_role_does_not_leak_across_tenants(self):
+        # A user who is an Auditor in tenant A has no membership at all in
+        # tenant B, so their role must not carry over — this is the exact
+        # bug the old global-Django-Group RBAC had.
+        tenant_a = make_tenant('coretestisoa')
+        tenant_b = make_tenant('coretestisob')
+        with schema_context(tenant_a.schema_name):
+            from django.contrib.auth import get_user_model
+            from tenants.models import Membership
+            User = get_user_model()
+            user = User.objects.create_user('cross_tenant_user', 'x@example.com', 'pass12345')
+            Membership.objects.create(user=user, tenant=tenant_a, role=Membership.Role.AUDITOR)
+
+        api = APIClient()
+        api.force_authenticate(user=user)
+
+        allowed = api.post(
+            '/api/audits/', {'title': 'Tenant A audit'}, HTTP_HOST=f'{tenant_a.schema_name}.localhost',
+        )
+        self.assertEqual(allowed.status_code, 201)
+
+        denied = api.post(
+            '/api/audits/', {'title': 'Tenant B audit'}, HTTP_HOST=f'{tenant_b.schema_name}.localhost',
+        )
+        self.assertEqual(denied.status_code, 403)
 
     def test_unauthenticated_request_is_rejected(self):
         tenant = make_tenant('coretestpermanon')

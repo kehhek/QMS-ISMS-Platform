@@ -1,5 +1,7 @@
 import React, { useState } from 'react'
 import RoleManager from './RoleManager'
+import TenantSettingsPanel from './TenantSettingsPanel'
+import MembersPanel from './MembersPanel'
 import DocumentsPanel from './DocumentsPanel'
 import RisksPanel from './RisksPanel'
 import AuditsPanel from './AuditsPanel'
@@ -10,7 +12,9 @@ const TABS = [
   { key: 'risks', label: 'Risks', Component: RisksPanel },
   { key: 'audits', label: 'Audits', Component: AuditsPanel },
   { key: 'capa', label: 'Corrective Actions', Component: CorrectiveActionsPanel },
-  { key: 'roles', label: 'Roles & Users', Component: RoleManager },
+  { key: 'members', label: 'Members', Component: MembersPanel },
+  { key: 'org-settings', label: 'Org Settings', Component: TenantSettingsPanel },
+  { key: 'roles', label: 'Global Users (superuser)', Component: RoleManager },
 ]
 
 export default function App() {

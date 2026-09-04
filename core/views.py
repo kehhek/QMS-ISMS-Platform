@@ -1,8 +1,9 @@
 from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
 
+from tenants.permissions import HasTenantRole
+
 from .models import Document, DocumentRevision, Risk, Audit, CorrectiveAction
-from .permissions import IsInGroupOrReadOnly
 from .serializers import (
     DocumentSerializer, DocumentRevisionSerializer, RiskSerializer,
     AuditSerializer, CorrectiveActionSerializer,
@@ -12,8 +13,9 @@ from .serializers import (
 class DocumentViewSet(viewsets.ModelViewSet):
     queryset = Document.objects.all()
     serializer_class = DocumentSerializer
-    permission_classes = [IsInGroupOrReadOnly]
-    allowed_groups = ['DocumentOwners', 'QualityManagers']
+    permission_classes = [HasTenantRole]
+    # Auditors review documents but shouldn't be the ones editing them.
+    allowed_roles = ['admin', 'user']
 
     def perform_update(self, serializer):
         # Document.save() reads this to attribute the resulting DocumentRevision.
@@ -37,19 +39,20 @@ class DocumentRevisionViewSet(viewsets.ReadOnlyModelViewSet):
 class RiskViewSet(viewsets.ModelViewSet):
     queryset = Risk.objects.all()
     serializer_class = RiskSerializer
-    permission_classes = [IsInGroupOrReadOnly]
-    allowed_groups = ['QualityManagers']
+    permission_classes = [HasTenantRole]
+    allowed_roles = ['admin', 'user']
 
 
 class AuditViewSet(viewsets.ModelViewSet):
     queryset = Audit.objects.all()
     serializer_class = AuditSerializer
-    permission_classes = [IsInGroupOrReadOnly]
-    allowed_groups = ['Auditors', 'QualityManagers']
+    permission_classes = [HasTenantRole]
+    allowed_roles = ['admin', 'auditor']
 
 
 class CorrectiveActionViewSet(viewsets.ModelViewSet):
     queryset = CorrectiveAction.objects.all()
     serializer_class = CorrectiveActionSerializer
-    permission_classes = [IsInGroupOrReadOnly]
-    allowed_groups = ['Auditors', 'QualityManagers']
+    permission_classes = [HasTenantRole]
+    # Any tenant member can raise/work a CAPA item.
+    allowed_roles = ['admin', 'auditor', 'user']

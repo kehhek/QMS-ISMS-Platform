@@ -1,14 +1,15 @@
 import datetime
 
-from django.contrib.auth.models import Group
+from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 from django_tenants.utils import schema_context, get_tenant_model
 
-GROUP_NAMES = ['Auditors', 'DocumentOwners', 'QualityManagers']
+from tenants.models import Membership
+from tenants.utils import generate_password
 
 
 class Command(BaseCommand):
-    help = 'Seed sample QMS/ISMS demo data (Documents, Risks, Audits, CAPA) into one or more tenant schemas'
+    help = 'Seed sample QMS/ISMS demo data (Documents, Risks, Audits, CAPA, Memberships) into one or more tenant schemas'
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -19,8 +20,6 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        self.seed_groups()
-
         Client = get_tenant_model()
         schemas = options['schemas']
         if not schemas:
@@ -33,14 +32,29 @@ class Command(BaseCommand):
             return
 
         for schema in schemas:
+            tenant = Client.objects.get(schema_name=schema)
+            self.seed_memberships(schema, tenant)
             self.seed_schema(schema)
 
-    def seed_groups(self):
-        # auth.Group lives in the shared/public schema (django.contrib.auth is a
-        # SHARED_APP), so this only needs to run once, not per tenant.
-        for name in GROUP_NAMES:
-            Group.objects.get_or_create(name=name)
-        self.stdout.write(self.style.SUCCESS(f'Ensured RBAC groups exist: {", ".join(GROUP_NAMES)}'))
+    def seed_memberships(self, schema, tenant):
+        """Demo accounts exercising each of the three roles, scoped to this
+        tenant. Usernames are schema-prefixed since accounts.User is a
+        SHARED_APP model — one global user pool across every tenant."""
+        User = get_user_model()
+        demo_members = [
+            (f'{schema}-auditor', f'auditor@{schema}.example.com', Membership.Role.AUDITOR),
+            (f'{schema}-user', f'user@{schema}.example.com', Membership.Role.USER),
+        ]
+        for username, email, role in demo_members:
+            with schema_context(tenant.schema_name):
+                user, created = User.objects.get_or_create(username=username, defaults={'email': email})
+                if created:
+                    user.set_password(generate_password())
+                    user.save()
+                Membership.objects.get_or_create(user=user, tenant=tenant, defaults={'role': role})
+
+        member_count = Membership.objects.filter(tenant=tenant).count()
+        self.stdout.write(self.style.SUCCESS(f'Schema "{schema}": {member_count} tenant memberships.'))
 
     def seed_schema(self, schema):
         from core.models import Document, Risk, Audit, CorrectiveAction

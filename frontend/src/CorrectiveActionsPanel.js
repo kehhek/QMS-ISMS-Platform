@@ -14,7 +14,6 @@ export default function CorrectiveActionsPanel({ token }) {
 
   useEffect(() => {
     if (token) load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
 
   const createAction = (e) => {

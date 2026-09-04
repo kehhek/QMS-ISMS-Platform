@@ -9,7 +9,15 @@ class TenantOnboardSerializer(serializers.Serializer):
     domain = serializers.CharField()
     admin_username = serializers.CharField(default='admin')
     admin_email = serializers.EmailField(default='admin@example.com')
-    admin_password = serializers.CharField(default='admin')
+    # If omitted, a strong random password is generated and returned once
+    # in the response — there's no reason for callers to hand us a weak one.
+    admin_password = serializers.CharField(required=False, allow_blank=True)
+
+    # Org branding, set on the new tenant at creation time.
+    logo_url = serializers.URLField(required=False, allow_blank=True)
+    primary_color = serializers.CharField(required=False, allow_blank=True, max_length=7)
+    support_email = serializers.EmailField(required=False, allow_blank=True)
+    website = serializers.URLField(required=False, allow_blank=True)
 
 
 User = get_user_model()

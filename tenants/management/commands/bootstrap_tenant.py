@@ -1,15 +1,8 @@
-import secrets
-import string
-
 from django.core.management.base import BaseCommand
-from tenants.models import Client, Domain
+from tenants.models import Client, Domain, Membership
+from tenants.utils import generate_password
 from django_tenants.utils import schema_context
 from django.contrib.auth import get_user_model
-
-
-def generate_password(length=20):
-    alphabet = string.ascii_letters + string.digits + '!@#%^&*-_+='
-    return ''.join(secrets.choice(alphabet) for _ in range(length))
 
 
 class Command(BaseCommand):
@@ -45,10 +38,16 @@ class Command(BaseCommand):
         # create superuser inside tenant schema
         with schema_context(client.schema_name):
             User = get_user_model()
-            if not User.objects.filter(username=username).exists():
-                User.objects.create_superuser(username=username, email=email, password=password)
+            user, created = User.objects.get_or_create(
+                username=username, defaults={'email': email, 'is_superuser': True, 'is_staff': True},
+            )
+            if created:
+                user.set_password(password)
+                user.save()
                 self.stdout.write(self.style.SUCCESS(f'Created superuser {username} in schema {schema}'))
                 if password_was_generated:
                     self.stdout.write(self.style.WARNING(f'Generated password: {password}'))
             else:
-                self.stdout.write(self.style.WARNING('Superuser already exists in tenant schema'))
+                self.stdout.write(self.style.WARNING('User already exists; reusing it'))
+
+            Membership.objects.get_or_create(user=user, tenant=client, defaults={'role': Membership.Role.ADMIN})
