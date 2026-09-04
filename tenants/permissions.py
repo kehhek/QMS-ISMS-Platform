@@ -48,3 +48,22 @@ class HasTenantRole(permissions.BasePermission):
         if not allowed:
             return role is not None
         return role in allowed
+
+
+class HasTenantRoleStrict(HasTenantRole):
+    """Like HasTenantRole, but `allowed_roles` gates reads too, not just
+    writes — for views where visibility itself should be role-restricted
+    (e.g. the audit log)."""
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+        if user.is_superuser:
+            return True
+
+        role = get_role(user)
+        allowed = getattr(view, 'allowed_roles', None)
+        if not allowed:
+            return role is not None
+        return role in allowed

@@ -87,6 +87,12 @@ USE_TZ = True
 
 STATIC_URL = '/static/'
 
+# Evidence uploads. Local disk for now (the repo dir is bind-mounted into
+# the web container, so files survive restarts); swap for S3/MinIO storage
+# before this needs to run anywhere beyond one dev host.
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Minimal templates setting required for admin and other template rendering

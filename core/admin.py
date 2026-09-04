@@ -1,5 +1,8 @@
 from django.contrib import admin
-from .models import Document, DocumentRevision, Risk, Audit, CorrectiveAction
+from .models import (
+    Document, DocumentRevision, Risk, Control, Incident, Audit, CorrectiveAction,
+    Evidence, Workflow, WorkflowStep, AuditLog,
+)
 
 
 class DocumentRevisionInline(admin.TabularInline):
@@ -28,6 +31,21 @@ class RiskAdmin(admin.ModelAdmin):
     list_filter = ('status',)
 
 
+@admin.register(Control)
+class ControlAdmin(admin.ModelAdmin):
+    list_display = ('identifier', 'name', 'status', 'owner')
+    list_filter = ('status',)
+    search_fields = ('identifier', 'name', 'description')
+    filter_horizontal = ('risks',)
+
+
+@admin.register(Incident)
+class IncidentAdmin(admin.ModelAdmin):
+    list_display = ('title', 'severity', 'status', 'related_risk', 'detected_at', 'resolved_at')
+    list_filter = ('severity', 'status')
+    search_fields = ('title', 'description')
+
+
 @admin.register(Audit)
 class AuditAdmin(admin.ModelAdmin):
     list_display = ('title', 'audit_type', 'status', 'auditor', 'scheduled_date', 'completed_date')
@@ -38,6 +56,42 @@ class AuditAdmin(admin.ModelAdmin):
 
 @admin.register(CorrectiveAction)
 class CorrectiveActionAdmin(admin.ModelAdmin):
-    list_display = ('title', 'action_type', 'status', 'owner', 'audit', 'risk', 'due_date', 'closed_date')
+    list_display = ('title', 'action_type', 'status', 'owner', 'audit', 'risk', 'incident', 'due_date', 'closed_date')
     list_filter = ('action_type', 'status')
     search_fields = ('title', 'description')
+
+
+@admin.register(Evidence)
+class EvidenceAdmin(admin.ModelAdmin):
+    list_display = ('title', 'content_type', 'object_id', 'uploaded_by', 'uploaded_at')
+    list_filter = ('content_type',)
+    search_fields = ('title', 'description')
+
+
+class WorkflowStepInline(admin.TabularInline):
+    model = WorkflowStep
+    extra = 0
+    readonly_fields = ('status', 'decided_by', 'decided_at')
+
+
+@admin.register(Workflow)
+class WorkflowAdmin(admin.ModelAdmin):
+    list_display = ('document', 'status', 'created_by', 'created_at', 'completed_at')
+    list_filter = ('status',)
+    inlines = [WorkflowStepInline]
+
+
+@admin.register(AuditLog)
+class AuditLogAdmin(admin.ModelAdmin):
+    list_display = ('created_at', 'actor', 'action', 'content_type', 'target_repr')
+    list_filter = ('action', 'content_type')
+    search_fields = ('target_repr',)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

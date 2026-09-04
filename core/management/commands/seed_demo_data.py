@@ -57,7 +57,7 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS(f'Schema "{schema}": {member_count} tenant memberships.'))
 
     def seed_schema(self, schema):
-        from core.models import Document, Risk, Audit, CorrectiveAction
+        from core.models import Document, Risk, Control, Incident, Audit, CorrectiveAction
 
         with schema_context(schema):
             documents = [
@@ -106,6 +106,39 @@ class Command(BaseCommand):
             ]
             for risk in risks:
                 Risk.objects.get_or_create(name=risk['name'], defaults=risk)
+
+            unpatched_risk = Risk.objects.filter(name='Unpatched servers').first()
+            phishing_risk = Risk.objects.filter(name='Phishing').first()
+
+            controls = [
+                dict(
+                    identifier='A.8.8', name='Management of technical vulnerabilities',
+                    description='Patch management and vulnerability scanning.',
+                    status=Control.Status.PARTIAL, owner='Infra Team',
+                    risk_names=['Unpatched servers'],
+                ),
+                dict(
+                    identifier='A.6.3', name='Information security awareness, education and training',
+                    description='Regular phishing-awareness training for all staff.',
+                    status=Control.Status.IMPLEMENTED, owner='People Team',
+                    risk_names=['Phishing'],
+                ),
+            ]
+            for control in controls:
+                risk_names = control.pop('risk_names', [])
+                obj, _ = Control.objects.get_or_create(identifier=control['identifier'], defaults=control)
+                risk_map = {'Unpatched servers': unpatched_risk, 'Phishing': phishing_risk}
+                obj.risks.set([risk_map[n] for n in risk_names if risk_map.get(n)])
+
+            Incident.objects.get_or_create(
+                title='Phishing email reported by staff',
+                defaults=dict(
+                    description='An employee reported a phishing email impersonating IT support.',
+                    severity=Incident.Severity.MEDIUM,
+                    status=Incident.Status.RESOLVED,
+                    related_risk=phishing_risk,
+                ),
+            )
 
             # Demonstrate a risk under active treatment.
             unpatched = Risk.objects.filter(name='Unpatched servers').first()
@@ -177,5 +210,6 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS(
                 f'Seeded schema "{schema}": '
                 f'{Document.objects.count()} documents, {Risk.objects.count()} risks, '
+                f'{Control.objects.count()} controls, {Incident.objects.count()} incidents, '
                 f'{Audit.objects.count()} audits, {CorrectiveAction.objects.count()} corrective actions.'
             ))
