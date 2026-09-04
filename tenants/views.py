@@ -4,6 +4,8 @@ from rest_framework import viewsets, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from core.audit import log_action
+from core.models import AuditLog
 from tenants.permissions import HasTenantRole
 from tenants.utils import generate_password
 
@@ -37,6 +39,7 @@ class TenantSettingsView(APIView):
         serializer = TenantSettingsSerializer(tenant, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        log_action(request.user, AuditLog.Action.UPDATE, tenant, metadata={'fields': list(request.data.keys())})
         return Response(serializer.data)
 
 
@@ -79,6 +82,12 @@ class MembershipViewSet(viewsets.ModelViewSet):
 
         membership, membership_created = Membership.objects.update_or_create(
             user=user, tenant=tenant, defaults={'role': data['role']},
+        )
+        log_action(
+            request.user,
+            AuditLog.Action.CREATE if membership_created else AuditLog.Action.UPDATE,
+            membership,
+            metadata={'username': user.username, 'role': data['role'], 'new_user': user_created},
         )
         payload = MembershipSerializer(membership).data
         if generated_password:

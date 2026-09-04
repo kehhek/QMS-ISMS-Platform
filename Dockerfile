@@ -5,6 +5,11 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
+# postgresql-client provides pg_dump/pg_restore/psql, used by the
+# backup_tenants / restore_tenant_test management commands.
+RUN apt-get update && apt-get install -y --no-install-recommends postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt /app/
 RUN pip install --upgrade pip && pip install -r requirements.txt
 

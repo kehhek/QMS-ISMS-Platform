@@ -12,6 +12,7 @@ dist/
 celerybeat-schedule*
 staticfiles/
 media/
+backups/
 
 # Env
 .env

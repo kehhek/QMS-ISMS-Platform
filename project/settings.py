@@ -14,6 +14,16 @@ if not SECRET_KEY:
     else:
         raise ImproperlyConfigured('DJANGO_SECRET_KEY must be set when DJANGO_DEBUG=False')
 
+# Encryption at rest for Evidence file uploads (see core/storage.py). Fixed
+# dev-only default so encrypted files stay readable across restarts locally;
+# real deployments must set their own via env and never commit it.
+EVIDENCE_ENCRYPTION_KEY = os.environ.get('EVIDENCE_ENCRYPTION_KEY')
+if not EVIDENCE_ENCRYPTION_KEY:
+    if DEBUG:
+        EVIDENCE_ENCRYPTION_KEY = '0vS7ZvUQPxmAbnXxrrIZReJL8RDq4XcS-SHXE3fZ7ss='
+    else:
+        raise ImproperlyConfigured('EVIDENCE_ENCRYPTION_KEY must be set when DJANGO_DEBUG=False')
+
 # Multi-tenancy means subdomains aren't known in advance, so the wildcard
 # default only applies in DEBUG. Set DJANGO_ALLOWED_HOSTS (comma-separated)
 # for production; a leading dot matches the bare domain and all subdomains.
@@ -53,6 +63,9 @@ INSTALLED_APPS = list(SHARED_APPS) + list(TENANT_APPS)
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django_tenants.middleware.main.TenantMainMiddleware',
+    # Must come after TenantMainMiddleware: it reads connection.tenant,
+    # which that middleware is what sets.
+    'tenants.middleware.TenantSessionScopeMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -60,6 +73,21 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
 ]
+
+# TLS is expected to be terminated in front of this app (a reverse proxy /
+# load balancer) — Django doesn't serve HTTPS itself. These just make sure
+# the app *behaves* correctly once it's behind one: trusts the proxy's
+# X-Forwarded-Proto header, redirects plain HTTP, and never sends cookies
+# unencrypted. Left off in DEBUG since local dev has no TLS in front of it.
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
 
 ROOT_URLCONF = 'project.urls'
 PUBLIC_SCHEMA_URLCONF = 'project.urls'
@@ -140,8 +168,19 @@ CELERY_BEAT_SCHEDULE = {
     'run-audit-every-minute': {
         'task': 'core.tasks.run_audit',
         'schedule': 60.0,
-    }
+    },
+    'daily-tenant-backup': {
+        'task': 'tenants.tasks.run_daily_backups',
+        'schedule': crontab(hour=2, minute=0),
+    },
 }
+
+# Where backup_tenants writes dumps (see tenants/management/commands/).
+# Bind-mounted into the container like everything else, so backups land on
+# the host — swap for S3/off-host storage before this runs anywhere that
+# isn't disposable.
+BACKUP_ROOT = BASE_DIR / 'backups'
+BACKUP_RETENTION_COUNT = int(os.environ.get('BACKUP_RETENTION_COUNT', '14'))
 
 # CORS - permissive only in DEBUG; set CORS_ALLOWED_ORIGINS (comma-separated) for production
 CORS_ALLOW_ALL_ORIGINS = DEBUG

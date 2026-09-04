@@ -1,3 +1,5 @@
+from rest_framework.authtoken.models import Token
+from rest_framework.authtoken.views import ObtainAuthToken
 from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
@@ -7,6 +9,8 @@ from tenants.utils import generate_password
 from django_tenants.utils import schema_context
 from django.contrib.auth import get_user_model, login, logout, authenticate
 from django.contrib.auth.models import Group
+from core.audit import log_action
+from core.models import AuditLog
 from .serializers import TenantOnboardSerializer, UserSerializer, GroupSerializer
 from rest_framework.authentication import SessionAuthentication, BasicAuthentication
 from rest_framework.views import APIView
@@ -49,6 +53,28 @@ def onboard_tenant(request):
     return Response(response, status=status.HTTP_201_CREATED)
 
 
+class LoggingObtainAuthToken(ObtainAuthToken):
+    """Same as DRF's stock token-obtain view, but records every attempt
+    (success or failure) in the audit log — this is the primary login
+    path in practice, since the frontend and every curl example in this
+    project use token auth rather than session login."""
+
+    def post(self, request, *args, **kwargs):
+        serializer = self.serializer_class(data=request.data, context={'request': request})
+        if serializer.is_valid():
+            user = serializer.validated_data['user']
+            token, _ = Token.objects.get_or_create(user=user)
+            log_action(user, AuditLog.Action.LOGIN, user, metadata={'method': 'token'})
+            return Response({'token': token.key})
+
+        username = request.data.get('username', '')
+        User = get_user_model()
+        existing_user = User.objects.filter(username=username).first()
+        if existing_user:
+            log_action(None, AuditLog.Action.LOGIN_FAILED, existing_user, metadata={'method': 'token'})
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
 class LoginView(APIView):
     authentication_classes = [SessionAuthentication, BasicAuthentication]
 
@@ -58,7 +84,12 @@ class LoginView(APIView):
         user = authenticate(request, username=username, password=password)
         if user is not None and user.is_active:
             login(request, user)
+            log_action(user, AuditLog.Action.LOGIN, user, metadata={'method': 'session'})
             return Response({'ok': True, 'username': user.username})
+
+        existing_user = get_user_model().objects.filter(username=username).first()
+        if existing_user:
+            log_action(None, AuditLog.Action.LOGIN_FAILED, existing_user, metadata={'method': 'session'})
         return Response({'ok': False}, status=status.HTTP_400_BAD_REQUEST)
 
 

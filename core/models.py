@@ -3,6 +3,8 @@ from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
 
+from .storage import EncryptedFileSystemStorage
+
 
 class Document(models.Model):
     class Status(models.TextChoices):
@@ -240,7 +242,7 @@ class Evidence(models.Model):
     generic FK lets one upload flow serve all of them."""
 
     title = models.CharField(max_length=255)
-    file = models.FileField(upload_to='evidence/%Y/%m/')
+    file = models.FileField(upload_to='evidence/%Y/%m/', storage=EncryptedFileSystemStorage())
     description = models.TextField(blank=True)
     uploaded_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
@@ -328,6 +330,8 @@ class AuditLog(models.Model):
         DELETE = 'delete', 'Delete'
         APPROVE = 'approve', 'Approve'
         REJECT = 'reject', 'Reject'
+        LOGIN = 'login', 'Login'
+        LOGIN_FAILED = 'login_failed', 'Failed login'
 
     actor = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+',

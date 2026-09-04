@@ -1,4 +1,3 @@
-from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -7,6 +6,7 @@ from rest_framework.response import Response
 
 from tenants.permissions import HasTenantRole, HasTenantRoleStrict, get_role
 
+from .audit import log_action
 from .models import (
     Document, DocumentRevision, Risk, Control, Incident, Audit, CorrectiveAction,
     Evidence, Workflow, WorkflowStep, AuditLog,
@@ -29,13 +29,7 @@ class AuditLoggingMixin:
     """
 
     def _log(self, action_name, instance):
-        AuditLog.objects.create(
-            actor=self.request.user if self.request.user.is_authenticated else None,
-            action=action_name,
-            content_type=ContentType.objects.get_for_model(instance),
-            object_id=instance.pk,
-            target_repr=str(instance),
-        )
+        log_action(self.request.user, action_name, instance)
 
     def perform_create(self, serializer):
         instance = serializer.save()
@@ -184,12 +178,8 @@ class WorkflowStepViewSet(viewsets.ReadOnlyModelViewSet):
         step.decided_at = timezone.now()
         step.save()
 
-        AuditLog.objects.create(
-            actor=user,
-            action=AuditLog.Action.APPROVE if decision == 'approved' else AuditLog.Action.REJECT,
-            content_type=ContentType.objects.get_for_model(step),
-            object_id=step.pk,
-            target_repr=str(step),
+        log_action(
+            user, AuditLog.Action.APPROVE if decision == 'approved' else AuditLog.Action.REJECT, step,
         )
 
         workflow = step.workflow
