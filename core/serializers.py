@@ -1,8 +1,8 @@
 from rest_framework import serializers
 
 from .models import (
-    Document, DocumentRevision, Risk, Supplier, Control, Incident, Audit, CorrectiveAction,
-    Evidence, Workflow, WorkflowStep, AuditLog, ElectronicSignature, TrainingRecord,
+    Document, DocumentRevision, Risk, Supplier, SupplierQuestionnaire, Control, Incident, Audit,
+    CorrectiveAction, Evidence, Workflow, WorkflowStep, AuditLog, ElectronicSignature, TrainingRecord,
     Asset, Nonconformance, ApprovalMatrixRule, ApprovalRecord, CalendarEvent,
 )
 
@@ -94,6 +94,33 @@ class SupplierSerializer(serializers.ModelSerializer):
             'website', 'status', 'risks', 'notes', 'created_at', 'updated_at',
         )
         read_only_fields = ('created_at', 'updated_at')
+
+
+class SupplierQuestionnaireSerializer(serializers.ModelSerializer):
+    supplier_name = serializers.CharField(source='supplier.name', read_only=True)
+    sent_by_username = serializers.CharField(source='sent_by.username', read_only=True, default=None)
+    reviewed_by_username = serializers.CharField(source='reviewed_by.username', read_only=True, default=None)
+    question_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SupplierQuestionnaire
+        fields = (
+            'id', 'supplier', 'supplier_name', 'title', 'questions', 'question_count', 'status',
+            'access_token', 'sent_at', 'sent_by', 'sent_by_username', 'responses', 'responded_at',
+            'reviewed_at', 'reviewed_by', 'reviewed_by_username', 'created_at', 'updated_at',
+        )
+        # status/sent_*/responses/responded_at/reviewed_* only ever change
+        # via the send/review actions or the supplier's own public
+        # response — never a direct PATCH (same reasoning as Document's
+        # status field: a plain PATCH here would let an admin fabricate a
+        # "responded" questionnaire without the supplier ever answering).
+        read_only_fields = (
+            'status', 'access_token', 'sent_at', 'sent_by', 'responses', 'responded_at',
+            'reviewed_at', 'reviewed_by', 'created_at', 'updated_at',
+        )
+
+    def get_question_count(self, obj):
+        return len(obj.questions or [])
 
 
 class ControlSerializer(serializers.ModelSerializer):

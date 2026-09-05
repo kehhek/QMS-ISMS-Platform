@@ -239,14 +239,19 @@ button:disabled {
   cursor: not-allowed;
 }
 
-button.btn-primary,
+/* .btn-primary (not button.btn-primary) so this also colors <a
+   class="btn-primary"> links (react-router Link renders an <a>, which
+   never picks up the button{} tag-selector's box styling below) —
+   without this, a bare "btn-primary" Link with no other class had no
+   background/padding at all and rendered as plain text. */
+.btn-primary,
 form button[type='submit'] {
   background: var(--color-primary);
   border-color: var(--color-primary);
   color: #fff;
 }
 
-button.btn-primary:hover:not(:disabled),
+.btn-primary:hover:not(:disabled),
 form button[type='submit']:hover:not(:disabled) {
   background: var(--color-primary-hover);
   border-color: var(--color-primary-hover);
@@ -607,25 +612,59 @@ tbody tr:last-child td {
   gap: 16px;
 }
 
+/* Three-tier button hierarchy in the header, low to high emphasis —
+   plain underlined text reads as an afterthought next to a real button,
+   so "Log in" gets a quiet pill and "Create account" a real outline
+   rather than staying bare links. */
 .marketing-nav-link {
   color: var(--color-text);
   text-decoration: none;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: var(--radius);
 }
 
 .marketing-nav-link:hover {
   color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+
+.marketing-nav-btn-outline {
+  color: var(--color-primary);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius);
+}
+
+.marketing-nav-btn-outline:hover {
+  background: var(--color-primary-soft);
 }
 
 a.btn-primary {
+  /* The button{} tag-selector's box styling (padding/font/border-radius)
+     only ever applies to real <button> elements — an <a> needs its own
+     copy of the same box model, or it renders as unstyled text. */
   display: inline-block;
   text-decoration: none;
   text-align: center;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 9px 18px;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
 }
 
 /* Full-bleed hero: breaks out of .marketing's max-width to span the
-   viewport, while .hero's own content stays centered and readable. */
+   viewport, while .hero's own content stays centered and readable. A
+   confident dark surface with a soft brand-color glow reads as more
+   premium than a loud edge-to-edge gradient (Stripe/Linear/Vanta all
+   lean on restraint — see the redesign notes), and doubles as strong
+   contrast for the white headline. */
 .hero {
   width: 100vw;
   position: relative;
@@ -634,86 +673,145 @@ a.btn-primary {
   margin-left: -50vw;
   margin-right: -50vw;
   text-align: center;
-  padding: 72px 20px 64px;
-  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 55%, #a855f7 100%);
+  padding: 96px 20px 72px;
+  background: radial-gradient(ellipse 900px 500px at 50% -10%, rgba(124, 58, 237, 0.35), transparent),
+    #0b0e1a;
   color: #ffffff;
-  margin-bottom: 56px;
+  margin-bottom: 64px;
+  overflow: hidden;
+}
+
+.hero-eyebrow {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #a5b4fc;
+  margin: 0 0 18px;
 }
 
 .hero h1 {
-  font-size: 38px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  margin: 0 0 16px;
-  max-width: 640px;
+  font-size: 48px;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  line-height: 1.1;
+  margin: 0 0 18px;
+  max-width: 680px;
   margin-left: auto;
   margin-right: auto;
   color: #ffffff;
 }
 
 .hero-subtitle {
-  font-size: 16px;
-  color: rgba(255, 255, 255, 0.88);
-  max-width: 520px;
-  margin: 0 auto 28px;
-  line-height: 1.5;
+  font-size: 17px;
+  color: rgba(255, 255, 255, 0.72);
+  max-width: 540px;
+  margin: 0 auto 32px;
+  line-height: 1.6;
 }
 
-.hero-cta {
+.hero-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+/* a.hero-cta (not .hero-cta) to out-rank a.btn-primary's own font-size/
+   padding — same tag+class specificity, and this rule comes later. */
+a.hero-cta {
   font-size: 15px;
   padding: 12px 26px;
   background: #ffffff;
-  color: var(--color-primary);
+  color: #0b0e1a;
   border-color: #ffffff;
   font-weight: 600;
 }
 
-.hero-cta:hover {
-  background: rgba(255, 255, 255, 0.92);
-  color: var(--color-primary-hover);
-  border-color: #ffffff;
+a.hero-cta:hover {
+  background: rgba(255, 255, 255, 0.88);
+  border-color: rgba(255, 255, 255, 0.88);
+}
+
+.hero-cta-ghost {
+  font-size: 15px;
+  padding: 12px 26px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  color: #ffffff;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.hero-cta-ghost:hover {
+  border-color: rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.hero-frameworks {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  color: rgba(255, 255, 255, 0.45);
+  margin: 0;
+}
+
+/* A brief, quantified credibility strip right under the hero — the
+   pattern security/compliance vendors (Vanta et al.) lean on hardest,
+   since a trust-buying audience reads for these numbers before copy. */
+.proof-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 24px;
+  text-align: center;
+  margin-bottom: 64px;
+  padding-bottom: 48px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.proof-value {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--color-text);
+}
+
+.proof-label {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  margin-top: 4px;
 }
 
 .feature-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 16px;
+  gap: 20px;
   margin-bottom: 64px;
 }
 
+/* No icon boxes — a thin top accent is enough differentiation without
+   the visual noise of four different emoji/colored badges. */
 .feature-card {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
+  border-top: 2px solid var(--color-primary);
   border-radius: var(--radius);
-  padding: 20px;
+  padding: 24px 20px;
 }
-
-.feature-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  font-size: 18px;
-  margin-bottom: 12px;
-}
-
-.feature-icon-blue { background: #dbeafe; }
-.feature-icon-amber { background: var(--color-warning-bg); }
-.feature-icon-teal { background: #ccfbf1; }
-.feature-icon-violet { background: #ede9fe; }
 
 .feature-card h3 {
   margin: 0 0 8px;
-  font-size: 15px;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .feature-card p {
   margin: 0;
   font-size: 13px;
   color: var(--color-text-muted);
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
 .pricing {
@@ -722,7 +820,9 @@ a.btn-primary {
 }
 
 .pricing h2 {
-  font-size: 24px;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
   margin-bottom: 32px;
 }
 
@@ -744,11 +844,7 @@ a.btn-primary {
 }
 
 .pricing-card.highlighted {
-  border-color: transparent;
-  background:
-    linear-gradient(var(--color-surface), var(--color-surface)) padding-box,
-    linear-gradient(135deg, #4f46e5, #a855f7) border-box;
-  border: 2px solid transparent;
+  border: 2px solid var(--color-primary);
   box-shadow: var(--shadow-md);
   padding-top: 40px;
 }
@@ -758,7 +854,7 @@ a.btn-primary {
   top: 0;
   left: 24px;
   transform: translateY(-50%);
-  background: linear-gradient(135deg, #4f46e5, #a855f7);
+  background: var(--color-primary);
   color: #fff;
   font-size: 11px;
   font-weight: 700;
@@ -825,6 +921,8 @@ a.btn-primary {
 .demo-request-pitch h2 {
   margin: 0 0 10px;
   font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
 }
 
 .demo-request-pitch p {
@@ -853,6 +951,14 @@ a.btn-primary {
 @media (max-width: 700px) {
   .demo-request-inner {
     grid-template-columns: 1fr;
+  }
+
+  .hero h1 {
+    font-size: 34px;
+  }
+
+  .hero-actions {
+    flex-direction: column;
   }
 }
 

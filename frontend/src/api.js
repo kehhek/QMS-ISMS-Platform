@@ -60,10 +60,19 @@ export function apiFetch(path, token, options = {}) {
   }).then(handleResponse)
 }
 
-// For following DRF pagination's `next`/`previous` links, which are full
-// URLs (including host), not paths relative to API_BASE.
+// For following DRF pagination's `next`/`previous` links. DRF builds these
+// as full absolute URLs (scheme+host+path) from whatever Host header
+// reached Django — in dev that's host.docker.internal (the CRA proxy
+// rewrites Host to its target when forwarding), a name the browser itself
+// can't resolve at all, so fetching the link verbatim fails outright.
+// Every other call in this app goes through a same-origin relative path
+// instead (see downloadFile's comment on raw URLs) — drop the scheme+host
+// here too and keep only path+query, so this follows the exact same
+// same-origin route (through the dev proxy / prod's own reverse proxy)
+// as every other request, regardless of what host DRF happened to see.
 export function apiFetchUrl(url, token) {
-  return fetch(url, { headers: authHeaders(token) }).then(handleResponse)
+  const parsed = new URL(url, window.location.origin)
+  return fetch(parsed.pathname + parsed.search, { headers: authHeaders(token) }).then(handleResponse)
 }
 
 // DRF's PageNumberPagination wraps list responses as

@@ -1,3 +1,5 @@
+import secrets
+
 from django.conf import settings
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
@@ -241,6 +243,54 @@ class Supplier(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class SupplierQuestionnaire(models.Model):
+    """A security/due-diligence questionnaire sent to a Supplier (ISO
+    27001 A.5.19-A.5.22) — a structured, trackable substitute for an
+    email thread. The supplier fills it out through a public, token-based
+    link with no account of their own needed, the same "no user to
+    authenticate as yet" pattern as DemoRequestView/RegisterView — see
+    PublicQuestionnaireView."""
+
+    class Status(models.TextChoices):
+        DRAFT = 'draft', 'Draft'
+        SENT = 'sent', 'Sent'
+        RESPONDED = 'responded', 'Responded'
+        REVIEWED = 'reviewed', 'Reviewed'
+
+    supplier = models.ForeignKey(Supplier, on_delete=models.CASCADE, related_name='questionnaires')
+    title = models.CharField(max_length=255)
+    questions = models.JSONField(default=list, help_text='List of question strings.')
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    # Unguessable, unique — this IS the supplier's authentication (there's
+    # no account to log into). Generated once at creation, not only at
+    # send time, so an admin previewing/copying the link before sending
+    # already has a stable URL.
+    access_token = models.CharField(max_length=64, unique=True, editable=False)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    sent_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+    )
+    responses = models.JSONField(default=list, blank=True, help_text='List of {"question": ..., "answer": ...}.')
+    responded_at = models.DateTimeField(null=True, blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def save(self, *args, **kwargs):
+        if not self.access_token:
+            self.access_token = secrets.token_urlsafe(32)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f'{self.title} — {self.supplier.name}'
 
 
 class Control(models.Model):

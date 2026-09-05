@@ -17,6 +17,84 @@ const emptyForm = () => ({
   doc_id: '', title: '', content: '', classification: 'internal', owner: '', reviewer: '', approver: '',
 })
 
+function PolicyTemplatesSection({ token, onGenerated }) {
+  const [templates, setTemplates] = useState(null)
+  const [error, setError] = useState(null)
+  const [generatingSlug, setGeneratingSlug] = useState(null)
+  const [expanded, setExpanded] = useState(false)
+
+  const load = () => {
+    apiFetch('/policy-templates/', token)
+      .then(setTemplates)
+      .catch((err) => setError(err.message))
+  }
+
+  useEffect(() => {
+    load()
+    // eslint-disable-next-line
+  }, [])
+
+  const generate = (slug) => {
+    setGeneratingSlug(slug)
+    setError(null)
+    apiFetch(`/policy-templates/${slug}/generate/`, token, { method: 'POST' })
+      .then(() => {
+        load()
+        onGenerated()
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setGeneratingSlug(null))
+  }
+
+  if (!templates) return null
+
+  return (
+    <div className="workflow-card" style={{ marginBottom: 16 }}>
+      <button type="button" onClick={() => setExpanded(!expanded)} style={{ marginBottom: expanded ? 12 : 0 }}>
+        {expanded ? 'Hide' : 'Generate a policy from a template'} ({templates.length} available)
+      </button>
+      {expanded && (
+        <div>
+          {error && <p className="error-text">{error}</p>}
+          <p className="panel-hint">
+            Each template is a real first draft (Purpose, Scope, Policy Statements, Roles, Review) mapped to
+            the ISO 27001 controls it supports — generated as a Draft you can edit, then route through the
+            normal approval workflow. Generating the same one twice reuses the existing draft.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>Policy</th>
+                <th>Covers</th>
+                <th>Controls</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {templates.map((t) => (
+                <tr key={t.slug}>
+                  <td>{t.title}</td>
+                  <td style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{t.summary}</td>
+                  <td style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{t.controls}</td>
+                  <td>
+                    <button
+                      type="button"
+                      onClick={() => generate(t.slug)}
+                      disabled={generatingSlug === t.slug}
+                    >
+                      {t.already_generated ? 'View/regenerate' : generatingSlug === t.slug ? 'Generating…' : 'Generate'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function PersonSelect({ value, onChange, members, allowNone }) {
   return (
     <select value={value || ''} onChange={(e) => onChange(e.target.value || null)}>
@@ -163,6 +241,10 @@ export default function DocumentsPanel({ token, category = 'general' }) {
         Reviewer/Approver here name who's designated for those roles; the actual signed approval is
         still recorded on the Approvals tab.
       </p>
+
+      {category === 'policy' && (
+        <PolicyTemplatesSection token={token} onGenerated={() => { load(); loadStatusCounts() }} />
+      )}
 
       {statusCounts && (
         <div className="stat-row">

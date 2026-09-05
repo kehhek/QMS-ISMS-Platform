@@ -4,21 +4,27 @@ import { formatApiError } from './api'
 
 const FEATURES = [
   {
-    title: 'Document control', icon: '📄', tone: 'blue',
+    title: 'Document control',
     body: 'Versioned documents with multi-step, role-based approval workflows.',
   },
   {
-    title: 'Risk & incident management', icon: '⚠️', tone: 'amber',
+    title: 'Risk & incident management',
     body: 'Track risks, incidents, suppliers, and the corrective actions that close them out.',
   },
   {
-    title: 'ISO 27001 & SOC 2 ready', icon: '✅', tone: 'teal',
+    title: 'ISO 27001 & SOC 2 ready',
     body: 'All 93 ISO 27001 controls and the SOC 2 Common Criteria, pre-loaded for every org.',
   },
   {
-    title: 'Immutable audit trail', icon: '🔒', tone: 'violet',
+    title: 'Immutable audit trail',
     body: 'Every action is logged, append-only, enforced at the database level — not just in the UI.',
   },
+]
+
+const PROOF_POINTS = [
+  { value: '93', label: 'ISO 27001 Annex A controls, pre-loaded' },
+  { value: '100%', label: 'Of records logged to an append-only audit trail' },
+  { value: '21 CFR Part 11', label: 'Electronic signatures on every approval' },
 ]
 
 const PLANS = [
@@ -119,24 +125,37 @@ export default function HomePage() {
         <div className="marketing-logo">QMS/ISMS Console</div>
         <nav className="marketing-nav">
           <Link to="/app" className="marketing-nav-link">Log in</Link>
-          <Link to="/register" className="marketing-nav-link">Create account</Link>
+          <Link to="/register" className="marketing-nav-btn-outline">Create account</Link>
           <Link to="/register" className="btn-primary">Get started</Link>
         </nav>
       </header>
 
       <section className="hero">
+        <p className="hero-eyebrow">Compliance software for QMS &amp; ISMS teams</p>
         <h1>Run your QMS and ISMS in one place</h1>
         <p className="hero-subtitle">
           Documents, risks, suppliers, audits, incidents, and corrective actions — with ISO 27001
           and SOC 2 controls built in from day one.
         </p>
-        <Link to="/register" className="btn-primary hero-cta">Get started free</Link>
+        <div className="hero-actions">
+          <Link to="/register" className="btn-primary hero-cta">Get started free</Link>
+          <Link to="/app" className="hero-cta-ghost">Log in</Link>
+        </div>
+        <p className="hero-frameworks">ISO/IEC 27001:2022 &nbsp;·&nbsp; SOC 2 &nbsp;·&nbsp; 21 CFR Part 11</p>
+      </section>
+
+      <section className="proof-strip">
+        {PROOF_POINTS.map((p) => (
+          <div key={p.label} className="proof-point">
+            <div className="proof-value">{p.value}</div>
+            <div className="proof-label">{p.label}</div>
+          </div>
+        ))}
       </section>
 
       <section className="feature-grid">
         {FEATURES.map((f) => (
           <div key={f.title} className="feature-card">
-            <div className={`feature-icon feature-icon-${f.tone}`}>{f.icon}</div>
             <h3>{f.title}</h3>
             <p>{f.body}</p>
           </div>
@@ -176,6 +195,7 @@ export default function HomePage() {
 
       <footer className="marketing-footer">
         <p>This is a demo/starter platform — pricing shown here is illustrative, not billed.</p>
+        <p><Link to="/trust">Trust Center</Link></p>
       </footer>
     </div>
   )

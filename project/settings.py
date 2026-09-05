@@ -200,6 +200,12 @@ REST_FRAMEWORK = {
         # inbox-flooding (repeated requests) and token-guessing (repeated
         # confirm attempts), same reasoning as 'registration'.
         'password-reset': '10/hour',
+        # Public supplier questionnaire response page — the access_token
+        # IS the credential, so this also slows down token-guessing.
+        'questionnaire-public': '30/hour',
+        # Public Trust Center page — cheap aggregate read, but still worth
+        # a floor above the general anon rate to deter scraping.
+        'trust-center-public': '60/hour',
     },
 }
 

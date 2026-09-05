@@ -1,13 +1,17 @@
+from django.conf import settings
 from django.contrib.contenttypes.models import ContentType
 from django.db.models import Count
 from django.utils import timezone
 from rest_framework import viewsets, status, mixins
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from tenants.permissions import HasTenantRole, HasTenantRoleStrict, get_role
+from project.notifications import send_notification_email
 
 from .audit import log_action
 from .approval_matrix import assert_approval_gate, ApprovalRequiredError
@@ -15,12 +19,13 @@ from .calendar import get_isms_calendar_events
 from .export import CsvExportMixin
 from .signatures import create_signature
 from .models import (
-    Document, DocumentRevision, Risk, Supplier, Control, Incident, Audit, CorrectiveAction,
-    Evidence, Workflow, WorkflowStep, AuditLog, ElectronicSignature, TrainingRecord,
+    Document, DocumentRevision, Risk, Supplier, SupplierQuestionnaire, Control, Incident, Audit,
+    CorrectiveAction, Evidence, Workflow, WorkflowStep, AuditLog, ElectronicSignature, TrainingRecord,
     Asset, Nonconformance, ApprovalMatrixRule, ApprovalRecord, CalendarEvent,
 )
 from .serializers import (
-    DocumentSerializer, DocumentRevisionSerializer, RiskSerializer, SupplierSerializer, ControlSerializer,
+    DocumentSerializer, DocumentRevisionSerializer, RiskSerializer, SupplierSerializer,
+    SupplierQuestionnaireSerializer, ControlSerializer,
     IncidentSerializer, AuditSerializer, CorrectiveActionSerializer, EvidenceSerializer,
     WorkflowSerializer, WorkflowStepSerializer, AuditLogSerializer, ElectronicSignatureSerializer,
     TrainingRecordSerializer, AssetSerializer, NonconformanceSerializer, CalendarEventSerializer,
@@ -137,6 +142,66 @@ class DocumentRevisionViewSet(viewsets.ReadOnlyModelViewSet):
         return qs
 
 
+class PolicyTemplateListView(APIView):
+    """Browse the bundled starter policy templates (see
+    core/data/policy_templates.py) — any tenant member can see what's
+    available, same visibility tier as browsing the Policies page itself.
+    Returns just the metadata, not the full template body, to keep the
+    picker light; the actual content only comes down on generate."""
+
+    permission_classes = [HasTenantRole]
+
+    def get(self, request):
+        from .data.policy_templates import POLICY_TEMPLATES
+
+        already_generated = set(
+            Document.objects.filter(category=Document.Category.POLICY).values_list('title', flat=True)
+        )
+        return Response([
+            {
+                'slug': t['slug'], 'title': t['title'], 'summary': t['summary'], 'controls': t['controls'],
+                'already_generated': t['title'] in already_generated,
+            }
+            for t in POLICY_TEMPLATES
+        ])
+
+
+class PolicyTemplateGenerateView(APIView):
+    """Generates a real Draft Document (category="policy") from a bundled
+    template — the same tier as creating any other document, since that's
+    exactly what this does on the requester's behalf. Still goes through
+    the normal Workflow/electronic-signature approval afterward; this
+    only removes the blank-page problem of writing one from scratch."""
+
+    permission_classes = [HasTenantRole]
+    allowed_roles = ['admin', 'user']
+
+    def post(self, request, slug):
+        from .data.policy_templates import POLICY_TEMPLATES_BY_SLUG
+
+        template = POLICY_TEMPLATES_BY_SLUG.get(slug)
+        if not template:
+            return Response({'detail': 'No such policy template.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Generating the same template twice hands back the existing
+        # document rather than piling up duplicates — a user re-clicking
+        # "Generate" shouldn't silently create a second draft they then
+        # have to notice and clean up.
+        existing = Document.objects.filter(category=Document.Category.POLICY, title=template['title']).first()
+        if existing:
+            return Response({**DocumentSerializer(existing).data, 'already_existed': True}, status=status.HTTP_200_OK)
+
+        document = Document.objects.create(
+            category=Document.Category.POLICY, title=template['title'], content=template['content'],
+            owner=request.user,
+        )
+        log_action(
+            request.user, AuditLog.Action.CREATE, document,
+            metadata={'generated_from_template': slug},
+        )
+        return Response({**DocumentSerializer(document).data, 'already_existed': False}, status=status.HTTP_201_CREATED)
+
+
 class CalendarEventViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
     """Custom ISMS Calendar entries — see CalendarEvent's docstring. Any
     tenant member reads (it's a visibility tool, same as the calendar
@@ -194,6 +259,147 @@ class SupplierViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
     serializer_class = SupplierSerializer
     permission_classes = [HasTenantRole]
     allowed_roles = ['admin', 'user']
+
+
+class SupplierQuestionnaireViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
+    """Security/due-diligence questionnaires sent to a Supplier — same
+    permission tier as managing the Supplier record itself. `send`
+    emails the supplier a link to a public, no-account response page
+    (PublicQuestionnaireView); `review` is how an admin/auditor marks a
+    responded questionnaire as read/actioned."""
+
+    serializer_class = SupplierQuestionnaireSerializer
+    permission_classes = [HasTenantRole]
+    allowed_roles = ['admin', 'user']
+
+    def get_queryset(self):
+        qs = SupplierQuestionnaire.objects.select_related('supplier', 'sent_by', 'reviewed_by').all()
+        supplier_id = self.request.query_params.get('supplier')
+        if supplier_id:
+            qs = qs.filter(supplier_id=supplier_id)
+        return qs
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        self._log(AuditLog.Action.CREATE, instance)
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        self._log(AuditLog.Action.UPDATE, instance)
+
+    @action(detail=True, methods=['post'])
+    def send(self, request, pk=None):
+        """Emails the supplier's contact a link to fill out the
+        questionnaire — no account needed, just this one-time link (the
+        access_token IS the credential, same reasoning as a password-reset
+        link). Re-sending an already-sent questionnaire just re-emails the
+        same link; it doesn't reset any answers already given."""
+        questionnaire = self.get_object()
+        if not questionnaire.supplier.contact_email:
+            return Response(
+                {'detail': 'This supplier has no contact email on file — add one first.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not questionnaire.questions:
+            return Response({'detail': 'Add at least one question before sending.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Same fallback as PasswordResetRequestView (accounts/views.py):
+        # FRONTEND_BASE_URL points at wherever the React app is actually
+        # served in production; in dev, where frontend/backend run on
+        # different ports, the request's own origin still gives a real,
+        # working link.
+        base_url = settings.FRONTEND_BASE_URL or request.build_absolute_uri('/').rstrip('/')
+        link = f'{base_url}/questionnaire/{questionnaire.access_token}'
+
+        sent = send_notification_email(
+            subject=f'Security questionnaire: {questionnaire.title}',
+            message=(
+                f'Hello {questionnaire.supplier.contact_name or questionnaire.supplier.name},\n\n'
+                f'Please complete the following security questionnaire at your earliest convenience: '
+                f'{questionnaire.title}\n\n'
+                f'{link}\n\n'
+                'No account is required — the link above is all you need.'
+            ),
+            recipient_list=[questionnaire.supplier.contact_email],
+        )
+        if not questionnaire.sent_at:
+            questionnaire.sent_at = timezone.now()
+        questionnaire.status = SupplierQuestionnaire.Status.SENT
+        questionnaire.sent_by = request.user
+        questionnaire.save(update_fields=['status', 'sent_at', 'sent_by'])
+        log_action(request.user, AuditLog.Action.UPDATE, questionnaire, metadata={'action': 'sent', 'email_sent': sent})
+        return Response(SupplierQuestionnaireSerializer(questionnaire).data)
+
+    @action(detail=True, methods=['post'])
+    def review(self, request, pk=None):
+        """Marks a responded questionnaire as reviewed — an explicit,
+        attributable step distinct from just reading the responses on
+        screen, so due-diligence sign-off shows up as real evidence."""
+        questionnaire = self.get_object()
+        if questionnaire.status != SupplierQuestionnaire.Status.RESPONDED:
+            return Response(
+                {'detail': 'Only a questionnaire the supplier has responded to can be reviewed.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        questionnaire.status = SupplierQuestionnaire.Status.REVIEWED
+        questionnaire.reviewed_at = timezone.now()
+        questionnaire.reviewed_by = request.user
+        questionnaire.save(update_fields=['status', 'reviewed_at', 'reviewed_by'])
+        log_action(request.user, AuditLog.Action.UPDATE, questionnaire, metadata={'action': 'reviewed'})
+        return Response(SupplierQuestionnaireSerializer(questionnaire).data)
+
+
+class PublicQuestionnaireView(APIView):
+    """Lets a supplier open and fill out a questionnaire with no account
+    of their own — same "no user to authenticate as yet" reasoning as
+    DemoRequestView/RegisterView. The access_token in the URL is the only
+    credential; TenantMainMiddleware has already resolved the correct
+    tenant schema from the Host header of whatever domain the supplier
+    actually visited, exactly like every other endpoint."""
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'questionnaire-public'
+
+    def get(self, request, token):
+        questionnaire = SupplierQuestionnaire.objects.filter(access_token=token).select_related('supplier').first()
+        if not questionnaire or questionnaire.status == SupplierQuestionnaire.Status.DRAFT:
+            return Response({'detail': 'This questionnaire link is not valid.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({
+            'title': questionnaire.title,
+            'supplier_name': questionnaire.supplier.name,
+            'questions': questionnaire.questions,
+            'already_responded': questionnaire.status in (
+                SupplierQuestionnaire.Status.RESPONDED, SupplierQuestionnaire.Status.REVIEWED,
+            ),
+            'responses': questionnaire.responses or None,
+        })
+
+    def post(self, request, token):
+        questionnaire = SupplierQuestionnaire.objects.filter(access_token=token).first()
+        if not questionnaire or questionnaire.status == SupplierQuestionnaire.Status.DRAFT:
+            return Response({'detail': 'This questionnaire link is not valid.'}, status=status.HTTP_404_NOT_FOUND)
+        if questionnaire.status in (SupplierQuestionnaire.Status.RESPONDED, SupplierQuestionnaire.Status.REVIEWED):
+            return Response({'detail': 'This questionnaire has already been submitted.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        answers = request.data.get('answers')
+        if not isinstance(answers, list) or len(answers) != len(questionnaire.questions):
+            return Response(
+                {'detail': f'Expected exactly {len(questionnaire.questions)} answers.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        questionnaire.responses = [
+            {'question': q, 'answer': (a or '').strip()} for q, a in zip(questionnaire.questions, answers)
+        ]
+        questionnaire.status = SupplierQuestionnaire.Status.RESPONDED
+        questionnaire.responded_at = timezone.now()
+        questionnaire.save(update_fields=['responses', 'status', 'responded_at'])
+        log_action(
+            None, AuditLog.Action.UPDATE, questionnaire,
+            metadata={'action': 'supplier_responded', 'supplier': questionnaire.supplier.name},
+        )
+        return Response({'ok': True})
 
 
 class ControlViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
@@ -596,6 +802,55 @@ class DashboardSummaryView(APIView):
                 'incidents': Incident.objects.count(),
                 'controls': Control.objects.count(),
             },
+        })
+
+
+class PublicTrustCenterView(APIView):
+    """A public, no-login page proving this org's compliance posture to
+    its prospects/customers — the same pattern Vanta/Drata call a "Trust
+    Center". Deliberately exposes only aggregate, non-sensitive figures:
+    framework implementation percentages and a published-policy count —
+    never individual control names, risks, or incidents, which would leak
+    real security detail to anyone with the link. AllowAny, like
+    DemoRequestView/PublicQuestionnaireView, resolved to the correct
+    tenant by TenantMainMiddleware from the request's own Host header."""
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'trust-center-public'
+
+    @staticmethod
+    def _framework_stats(framework):
+        rows = Control.objects.filter(framework=framework).values('status').annotate(count=Count('id'))
+        by_status = {row['status']: row['count'] for row in rows}
+        total = sum(by_status.values())
+        implemented = by_status.get(Control.Status.IMPLEMENTED, 0)
+        return {
+            'total': total,
+            'implemented': implemented,
+            'percent': round(100 * implemented / total) if total else 0,
+        }
+
+    def get(self, request):
+        from django.db import connection
+
+        tenant = getattr(connection, 'tenant', None)
+        if tenant is None:
+            return Response({'detail': 'No organization found for this address.'}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response({
+            'org_name': tenant.name,
+            'logo_url': tenant.logo_url,
+            'primary_color': tenant.primary_color,
+            'website': tenant.website,
+            'frameworks': {
+                'iso27001': self._framework_stats(Control.Framework.ISO27001),
+                'soc2': self._framework_stats(Control.Framework.SOC2),
+            },
+            'published_policies': Document.objects.filter(
+                category=Document.Category.POLICY, status=Document.Status.APPROVED,
+            ).count(),
         })
 
 

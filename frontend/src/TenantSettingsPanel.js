@@ -109,6 +109,10 @@ export default function TenantSettingsPanel({ token }) {
           {saved && <span className="success-text">Saved</span>}
         </div>
       </form>
+      <p className="panel-hint">
+        Public Trust Center (share with customers/prospects — no login required):{' '}
+        <a href="/trust" target="_blank" rel="noreferrer">{window.location.origin}/trust</a>
+      </p>
       <ChangePasswordSection token={token} />
     </div>
   )

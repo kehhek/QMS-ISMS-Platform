@@ -5,6 +5,154 @@ import ExportCsvButton from './ExportCsvButton'
 
 const STATUS_OPTIONS = ['active', 'under_review', 'inactive']
 
+function QuestionnaireForm({ supplierId, token, onCreated }) {
+  const [title, setTitle] = useState('')
+  const [questionsText, setQuestionsText] = useState('')
+  const [error, setError] = useState(null)
+
+  const submit = (e) => {
+    e.preventDefault()
+    const questions = questionsText.split('\n').map((q) => q.trim()).filter(Boolean)
+    if (!questions.length) {
+      setError('Add at least one question (one per line).')
+      return
+    }
+    apiFetch('/supplier-questionnaires/', token, {
+      method: 'POST',
+      body: JSON.stringify({ supplier: supplierId, title, questions }),
+    })
+      .then(() => {
+        setTitle('')
+        setQuestionsText('')
+        setError(null)
+        onCreated()
+      })
+      .catch((err) => setError(err.message))
+  }
+
+  return (
+    <form onSubmit={submit} className="toolbar" style={{ flexWrap: 'wrap', marginBottom: 12 }}>
+      {error && <p className="error-text" style={{ width: '100%' }}>{error}</p>}
+      <input
+        placeholder="Questionnaire title (e.g. Annual Security Review)"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        style={{ width: 260 }}
+        required
+      />
+      <textarea
+        placeholder={'One question per line, e.g.\nDo you encrypt data at rest?\nWhen was your last penetration test?'}
+        value={questionsText}
+        onChange={(e) => setQuestionsText(e.target.value)}
+        style={{ width: '100%', minHeight: 70, fontFamily: 'inherit' }}
+      />
+      <button type="submit" className="btn-primary">Create questionnaire</button>
+    </form>
+  )
+}
+
+function QuestionnairesSection({ supplierId, token }) {
+  const [items, setItems] = useState(null)
+  const [error, setError] = useState(null)
+  const [expandedResponses, setExpandedResponses] = useState(null)
+
+  const load = () => {
+    apiFetch(`/supplier-questionnaires/?supplier=${supplierId}`, token)
+      .then((data) => setItems(unwrapList(data)))
+      .catch((err) => setError(err.message))
+  }
+
+  useEffect(() => {
+    load()
+    // eslint-disable-next-line
+  }, [])
+
+  const send = (q) => {
+    apiFetch(`/supplier-questionnaires/${q.id}/send/`, token, { method: 'POST' })
+      .then(() => { setError(null); load() })
+      .catch((err) => setError(err.message))
+  }
+
+  const review = (q) => {
+    apiFetch(`/supplier-questionnaires/${q.id}/review/`, token, { method: 'POST' })
+      .then(() => { setError(null); load() })
+      .catch((err) => setError(err.message))
+  }
+
+  return (
+    <div style={{ padding: '10px 4px' }}>
+      {error && <p className="error-text">{error}</p>}
+      <p className="panel-hint">
+        The supplier fills this out at a one-time link — no account needed on their end. "Send"
+        emails that link to the supplier's contact address on file.
+      </p>
+      <QuestionnaireForm supplierId={supplierId} token={token} onCreated={load} />
+      {items === null ? (
+        <p className="empty-state">Loading…</p>
+      ) : items.length === 0 ? (
+        <p className="empty-state">No questionnaires yet for this supplier.</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Questions</th>
+              <th>Status</th>
+              <th>Sent</th>
+              <th>Responded</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((q) => (
+              <React.Fragment key={q.id}>
+                <tr>
+                  <td>{q.title}</td>
+                  <td>{q.question_count}</td>
+                  <td><StatusBadge value={q.status} /></td>
+                  <td>{q.sent_at ? new Date(q.sent_at).toLocaleString() : '—'}</td>
+                  <td>{q.responded_at ? new Date(q.responded_at).toLocaleString() : '—'}</td>
+                  <td>
+                    <button onClick={() => send(q)} style={{ marginRight: 4 }}>
+                      {q.status === 'draft' ? 'Send' : 'Resend'}
+                    </button>
+                    {(q.status === 'responded' || q.status === 'reviewed') && (
+                      <button
+                        onClick={() => setExpandedResponses(expandedResponses === q.id ? null : q.id)}
+                        style={{ marginRight: 4 }}
+                      >
+                        {expandedResponses === q.id ? 'Hide responses' : 'View responses'}
+                      </button>
+                    )}
+                    {q.status === 'responded' && (
+                      <button onClick={() => review(q)}>Mark reviewed</button>
+                    )}
+                  </td>
+                </tr>
+                {expandedResponses === q.id && (
+                  <tr>
+                    <td colSpan={6} style={{ background: 'var(--color-bg)' }}>
+                      <ul style={{ margin: '8px 0', paddingLeft: 20 }}>
+                        {q.responses.map((r, i) => (
+                          <li key={i} style={{ marginBottom: 6 }}>
+                            <strong>{r.question}</strong>
+                            <br />
+                            {r.answer || <em>(no answer given)</em>}
+                          </li>
+                        ))}
+                      </ul>
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  )
+}
+
 const EMPTY_FORM = {
   name: '', description: '', contact_name: '', contact_email: '',
   contact_phone: '', website: '', status: 'under_review', notes: '',
@@ -16,6 +164,7 @@ export default function SupplierPanel({ token }) {
   const [form, setForm] = useState(EMPTY_FORM)
   const [editingId, setEditingId] = useState(null)
   const [editForm, setEditForm] = useState(null)
+  const [expandedId, setExpandedId] = useState(null)
 
   const load = () => {
     apiFetch('/suppliers/', token)
@@ -111,54 +260,70 @@ export default function SupplierPanel({ token }) {
               <th>Email</th>
               <th>Status</th>
               <th>Website</th>
+              <th>Questionnaires</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {suppliers.map((s) => (
-              editingId === s.id ? (
-                <tr key={s.id}>
-                  <td>
-                    <input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
-                  </td>
-                  <td>
-                    <input
-                      value={editForm.contact_name}
-                      onChange={(e) => setEditForm({ ...editForm, contact_name: e.target.value })}
-                    />
-                  </td>
-                  <td>
-                    <input
-                      value={editForm.contact_email}
-                      onChange={(e) => setEditForm({ ...editForm, contact_email: e.target.value })}
-                    />
-                  </td>
-                  <td>
-                    <select value={editForm.status} onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}>
-                      {STATUS_OPTIONS.map((st) => <option key={st} value={st}>{st.replace('_', ' ')}</option>)}
-                    </select>
-                  </td>
-                  <td>
-                    <input value={editForm.website} onChange={(e) => setEditForm({ ...editForm, website: e.target.value })} />
-                  </td>
-                  <td>
-                    <button onClick={saveEdit} style={{ marginRight: 4 }}>Save</button>
-                    <button onClick={cancelEdit}>Cancel</button>
-                  </td>
-                </tr>
-              ) : (
-                <tr key={s.id}>
-                  <td>{s.name}</td>
-                  <td>{s.contact_name || '—'}</td>
-                  <td>{s.contact_email || '—'}</td>
-                  <td><StatusBadge value={s.status} /></td>
-                  <td>{s.website ? <a href={s.website} target="_blank" rel="noreferrer">{s.website}</a> : '—'}</td>
-                  <td>
-                    <button onClick={() => startEdit(s)} style={{ marginRight: 4 }}>Edit</button>
-                    <button onClick={() => deleteSupplier(s)}>Delete</button>
-                  </td>
-                </tr>
-              )
+              <React.Fragment key={s.id}>
+                {editingId === s.id ? (
+                  <tr>
+                    <td>
+                      <input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
+                    </td>
+                    <td>
+                      <input
+                        value={editForm.contact_name}
+                        onChange={(e) => setEditForm({ ...editForm, contact_name: e.target.value })}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        value={editForm.contact_email}
+                        onChange={(e) => setEditForm({ ...editForm, contact_email: e.target.value })}
+                      />
+                    </td>
+                    <td>
+                      <select value={editForm.status} onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}>
+                        {STATUS_OPTIONS.map((st) => <option key={st} value={st}>{st.replace('_', ' ')}</option>)}
+                      </select>
+                    </td>
+                    <td>
+                      <input value={editForm.website} onChange={(e) => setEditForm({ ...editForm, website: e.target.value })} />
+                    </td>
+                    <td>—</td>
+                    <td>
+                      <button onClick={saveEdit} style={{ marginRight: 4 }}>Save</button>
+                      <button onClick={cancelEdit}>Cancel</button>
+                    </td>
+                  </tr>
+                ) : (
+                  <tr>
+                    <td>{s.name}</td>
+                    <td>{s.contact_name || '—'}</td>
+                    <td>{s.contact_email || '—'}</td>
+                    <td><StatusBadge value={s.status} /></td>
+                    <td>{s.website ? <a href={s.website} target="_blank" rel="noreferrer">{s.website}</a> : '—'}</td>
+                    <td>
+                      <button type="button" onClick={() => setExpandedId(expandedId === s.id ? null : s.id)}>
+                        {expandedId === s.id ? 'Hide' : 'View / Send'}
+                      </button>
+                    </td>
+                    <td>
+                      <button onClick={() => startEdit(s)} style={{ marginRight: 4 }}>Edit</button>
+                      <button onClick={() => deleteSupplier(s)}>Delete</button>
+                    </td>
+                  </tr>
+                )}
+                {expandedId === s.id && (
+                  <tr>
+                    <td colSpan={7} style={{ background: 'var(--color-bg)' }}>
+                      <QuestionnairesSection supplierId={s.id} token={token} />
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
             ))}
           </tbody>
         </table>

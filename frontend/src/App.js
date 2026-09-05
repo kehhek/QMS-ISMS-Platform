@@ -4,6 +4,8 @@ import HomePage from './HomePage'
 import RegisterPage from './RegisterPage'
 import ResetPasswordPage from './ResetPasswordPage'
 import ConsoleApp from './ConsoleApp'
+import QuestionnaireResponsePage from './QuestionnaireResponsePage'
+import TrustCenterPage from './TrustCenterPage'
 
 export default function App() {
   return (
@@ -12,6 +14,8 @@ export default function App() {
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/app" element={<ConsoleApp />} />
+      <Route path="/questionnaire/:token" element={<QuestionnaireResponsePage />} />
+      <Route path="/trust" element={<TrustCenterPage />} />
       <Route path="*" element={<HomePage />} />
     </Routes>
   )

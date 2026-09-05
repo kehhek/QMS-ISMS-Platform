@@ -465,3 +465,258 @@ class CoreApiPermissionTests(TestCase):
         api = APIClient()
         response = api.get('/api/documents/', HTTP_HOST=f'{tenant.schema_name}.localhost')
         self.assertEqual(response.status_code, 401)
+
+
+class PolicyTemplateTests(TestCase):
+    """Generating a starter Policy document from a bundled template — see
+    core/data/policy_templates.py. Solves the blank-page problem; still a
+    completely normal Document afterward (Draft, goes through the same
+    approval workflow as one written from scratch)."""
+
+    def setUp(self):
+        self.tenant = make_tenant('policytemplates')
+        self.host = f'{self.tenant.schema_name}.localhost'
+        with schema_context(self.tenant.schema_name):
+            from django.contrib.auth import get_user_model
+            from tenants.models import Membership
+            User = get_user_model()
+            self.admin = User.objects.create_user('policytpl_admin', 'a@example.com', 'pass12345')
+            Membership.objects.create(user=self.admin, tenant=self.tenant, role=Membership.Role.ADMIN)
+            self.auditor = User.objects.create_user('policytpl_auditor', 'x@example.com', 'pass12345')
+            Membership.objects.create(user=self.auditor, tenant=self.tenant, role=Membership.Role.AUDITOR)
+
+        self.api = APIClient()
+        self.api.force_authenticate(user=self.admin)
+
+    def test_listing_templates_reports_every_bundled_template(self):
+        from core.data.policy_templates import POLICY_TEMPLATES
+
+        resp = self.api.get('/api/policy-templates/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data), len(POLICY_TEMPLATES))
+        self.assertTrue(all(not t['already_generated'] for t in resp.data))
+
+    def test_generating_a_template_creates_a_draft_policy_document(self):
+        resp = self.api.post('/api/policy-templates/access-control-policy/generate/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(resp.data['category'], 'policy')
+        self.assertEqual(resp.data['status'], 'draft')
+        self.assertEqual(resp.data['title'], 'Access Control Policy')
+        self.assertIn('PURPOSE', resp.data['content'])
+        self.assertFalse(resp.data['already_existed'])
+
+    def test_generating_the_same_template_twice_reuses_the_existing_document(self):
+        first = self.api.post('/api/policy-templates/incident-response-policy/generate/', HTTP_HOST=self.host)
+        second = self.api.post('/api/policy-templates/incident-response-policy/generate/', HTTP_HOST=self.host)
+        self.assertEqual(first.data['id'], second.data['id'])
+        self.assertTrue(second.data['already_existed'])
+
+        with schema_context(self.tenant.schema_name):
+            from core.models import Document
+            self.assertEqual(Document.objects.filter(category='policy').count(), 1)
+
+    def test_generated_policy_shows_up_in_the_policies_list(self):
+        self.api.post('/api/policy-templates/data-classification-policy/generate/', HTTP_HOST=self.host)
+        resp = self.api.get('/api/documents/?category=policy', HTTP_HOST=self.host)
+        self.assertEqual(resp.data['count'], 1)
+        self.assertEqual(resp.data['results'][0]['title'], 'Data Classification & Handling Policy')
+
+    def test_unknown_template_slug_is_a_clean_404(self):
+        resp = self.api.post('/api/policy-templates/does-not-exist/generate/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 404)
+
+    def test_auditor_can_browse_but_not_generate(self):
+        api = APIClient()
+        api.force_authenticate(user=self.auditor)
+
+        listing = api.get('/api/policy-templates/', HTTP_HOST=self.host)
+        self.assertEqual(listing.status_code, 200)
+
+        generate = api.post('/api/policy-templates/acceptable-use-policy/generate/', HTTP_HOST=self.host)
+        self.assertEqual(generate.status_code, 403)
+
+
+class SupplierQuestionnaireTests(TestCase):
+    """Creating, sending, and publicly responding to a supplier
+    questionnaire — the access_token in the public link is the supplier's
+    only credential, so there's no login involved on their side at all."""
+
+    def setUp(self):
+        self.tenant = make_tenant('supplierquestionnaire')
+        self.host = f'{self.tenant.schema_name}.localhost'
+        with schema_context(self.tenant.schema_name):
+            from django.contrib.auth import get_user_model
+            from tenants.models import Membership
+            from core.models import Supplier
+            User = get_user_model()
+            self.admin = User.objects.create_user('sq_admin', 'a@example.com', 'pass12345')
+            Membership.objects.create(user=self.admin, tenant=self.tenant, role=Membership.Role.ADMIN)
+            self.supplier = Supplier.objects.create(
+                name='Acme Cloud', contact_name='Jane Vendor', contact_email='vendor@example.com',
+            )
+
+        self.api = APIClient()
+        self.api.force_authenticate(user=self.admin)
+
+    def _create_questionnaire(self):
+        resp = self.api.post(
+            '/api/supplier-questionnaires/',
+            {'supplier': self.supplier.id, 'title': 'Annual Review', 'questions': ['Q1?', 'Q2?']},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 201, resp.data)
+        return resp.data
+
+    def test_creating_a_questionnaire_generates_a_unique_access_token(self):
+        data = self._create_questionnaire()
+        self.assertEqual(data['status'], 'draft')
+        self.assertTrue(data['access_token'])
+        self.assertEqual(data['question_count'], 2)
+
+    def test_sending_requires_a_contact_email_and_at_least_one_question(self):
+        with schema_context(self.tenant.schema_name):
+            from core.models import Supplier
+            no_email_supplier = Supplier.objects.create(name='No Email Co')
+        resp = self.api.post(
+            '/api/supplier-questionnaires/',
+            {'supplier': no_email_supplier.id, 'title': 'X', 'questions': ['Q1?']},
+            format='json', HTTP_HOST=self.host,
+        )
+        send = self.api.post(f'/api/supplier-questionnaires/{resp.data["id"]}/send/', HTTP_HOST=self.host)
+        self.assertEqual(send.status_code, 400)
+        self.assertIn('contact email', send.data['detail'])
+
+    def test_sending_emails_the_supplier_a_working_link(self):
+        from django.core import mail
+
+        data = self._create_questionnaire()
+        send = self.api.post(f'/api/supplier-questionnaires/{data["id"]}/send/', HTTP_HOST=self.host)
+        self.assertEqual(send.status_code, 200, send.data)
+        self.assertEqual(send.data['status'], 'sent')
+        self.assertEqual(send.data['sent_by_username'], 'sq_admin')
+
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ['vendor@example.com'])
+        self.assertIn(data['access_token'], mail.outbox[0].body)
+
+    def test_supplier_can_view_and_submit_without_any_authentication(self):
+        data = self._create_questionnaire()
+        self.api.post(f'/api/supplier-questionnaires/{data["id"]}/send/', HTTP_HOST=self.host)
+        token = data['access_token']
+
+        anon = APIClient()
+        view = anon.get(f'/api/public/questionnaires/{token}/', HTTP_HOST=self.host)
+        self.assertEqual(view.status_code, 200)
+        self.assertEqual(view.data['questions'], ['Q1?', 'Q2?'])
+        self.assertFalse(view.data['already_responded'])
+
+        submit = anon.post(
+            f'/api/public/questionnaires/{token}/', {'answers': ['Yes', 'No']},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(submit.status_code, 200, submit.data)
+
+        # Admin side sees the response land.
+        detail = self.api.get(f'/api/supplier-questionnaires/{data["id"]}/', HTTP_HOST=self.host)
+        self.assertEqual(detail.data['status'], 'responded')
+        self.assertEqual(
+            detail.data['responses'], [{'question': 'Q1?', 'answer': 'Yes'}, {'question': 'Q2?', 'answer': 'No'}],
+        )
+
+    def test_a_draft_questionnaire_is_not_publicly_reachable(self):
+        data = self._create_questionnaire()  # never sent
+        anon = APIClient()
+        resp = anon.get(f'/api/public/questionnaires/{data["access_token"]}/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 404)
+
+    def test_cannot_submit_the_same_questionnaire_twice(self):
+        data = self._create_questionnaire()
+        self.api.post(f'/api/supplier-questionnaires/{data["id"]}/send/', HTTP_HOST=self.host)
+        token = data['access_token']
+        anon = APIClient()
+        anon.post(f'/api/public/questionnaires/{token}/', {'answers': ['A', 'B']}, format='json', HTTP_HOST=self.host)
+        again = anon.post(f'/api/public/questionnaires/{token}/', {'answers': ['C', 'D']}, format='json', HTTP_HOST=self.host)
+        self.assertEqual(again.status_code, 400)
+
+    def test_wrong_number_of_answers_is_rejected(self):
+        data = self._create_questionnaire()
+        self.api.post(f'/api/supplier-questionnaires/{data["id"]}/send/', HTTP_HOST=self.host)
+        anon = APIClient()
+        resp = anon.post(
+            f'/api/public/questionnaires/{data["access_token"]}/', {'answers': ['only one']},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_reviewing_requires_a_response_first(self):
+        data = self._create_questionnaire()
+        self.api.post(f'/api/supplier-questionnaires/{data["id"]}/send/', HTTP_HOST=self.host)
+        too_early = self.api.post(f'/api/supplier-questionnaires/{data["id"]}/review/', HTTP_HOST=self.host)
+        self.assertEqual(too_early.status_code, 400)
+
+    def test_reviewing_after_a_response_marks_it_reviewed(self):
+        data = self._create_questionnaire()
+        self.api.post(f'/api/supplier-questionnaires/{data["id"]}/send/', HTTP_HOST=self.host)
+        anon = APIClient()
+        anon.post(
+            f'/api/public/questionnaires/{data["access_token"]}/', {'answers': ['A', 'B']},
+            format='json', HTTP_HOST=self.host,
+        )
+        review = self.api.post(f'/api/supplier-questionnaires/{data["id"]}/review/', HTTP_HOST=self.host)
+        self.assertEqual(review.status_code, 200, review.data)
+        self.assertEqual(review.data['status'], 'reviewed')
+        self.assertEqual(review.data['reviewed_by_username'], 'sq_admin')
+
+    def test_auditor_can_read_but_not_create_or_send(self):
+        with schema_context(self.tenant.schema_name):
+            from django.contrib.auth import get_user_model
+            from tenants.models import Membership
+            User = get_user_model()
+            auditor = User.objects.create_user('sq_auditor', 'x@example.com', 'pass12345')
+            Membership.objects.create(user=auditor, tenant=self.tenant, role=Membership.Role.AUDITOR)
+
+        api = APIClient()
+        api.force_authenticate(user=auditor)
+        listing = api.get('/api/supplier-questionnaires/', HTTP_HOST=self.host)
+        self.assertEqual(listing.status_code, 200)
+
+        create = api.post(
+            '/api/supplier-questionnaires/', {'supplier': self.supplier.id, 'title': 'X', 'questions': ['Q?']},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(create.status_code, 403)
+
+
+class PublicTrustCenterTests(TestCase):
+    """The public, no-login Trust Center page — only aggregate figures,
+    never individual control/risk/incident detail."""
+
+    def setUp(self):
+        self.tenant = make_tenant('trustcenter')
+        self.host = f'{self.tenant.schema_name}.localhost'
+
+    def test_reports_aggregate_framework_percentages(self):
+        with schema_context(self.tenant.schema_name):
+            from core.models import Control, Document
+            Control.objects.create(framework='iso27001', identifier='A.1', name='x', status='implemented')
+            Control.objects.create(framework='iso27001', identifier='A.2', name='y', status='not_implemented')
+            Control.objects.create(framework='iso27001', identifier='A.3', name='z', status='not_implemented')
+            Control.objects.create(framework='soc2', identifier='CC1.1', name='a', status='implemented')
+            Document.objects.create(title='Policy A', category='policy', status='approved')
+            Document.objects.create(title='Policy B', category='policy', status='draft')
+
+        anon = APIClient()
+        resp = anon.get('/api/public/trust-center/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['org_name'], self.tenant.name)
+        self.assertEqual(resp.data['frameworks']['iso27001'], {'total': 3, 'implemented': 1, 'percent': 33})
+        self.assertEqual(resp.data['frameworks']['soc2'], {'total': 1, 'implemented': 1, 'percent': 100})
+        # Only the approved one counts — a draft policy isn't "published".
+        self.assertEqual(resp.data['published_policies'], 1)
+
+    def test_never_exposes_control_level_or_risk_detail(self):
+        anon = APIClient()
+        resp = anon.get('/api/public/trust-center/', HTTP_HOST=self.host)
+        body_str = str(resp.data)
+        for leaky_key in ('risks', 'incidents', 'controls', 'documents'):
+            self.assertNotIn(leaky_key, resp.data)

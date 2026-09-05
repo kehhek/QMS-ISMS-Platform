@@ -3,12 +3,13 @@ from django.http import JsonResponse
 from rest_framework.routers import DefaultRouter
 
 from .views import (
-    DocumentViewSet, DocumentRevisionViewSet, RiskViewSet, SupplierViewSet, ControlViewSet,
-    IncidentViewSet, AuditViewSet, CorrectiveActionViewSet, EvidenceViewSet, WorkflowViewSet,
+    DocumentViewSet, DocumentRevisionViewSet, RiskViewSet, SupplierViewSet, SupplierQuestionnaireViewSet,
+    ControlViewSet, IncidentViewSet, AuditViewSet, CorrectiveActionViewSet, EvidenceViewSet, WorkflowViewSet,
     WorkflowStepViewSet, AuditLogViewSet, ElectronicSignatureViewSet, CoreContentTypesView,
     DashboardSummaryView, TrainingRecordViewSet, IsmsCalendarView, ApprovalMatrixView,
     AssetViewSet, NonconformanceViewSet, ApprovalMatrixRuleViewSet, ApprovalRecordViewSet,
-    CalendarEventViewSet,
+    CalendarEventViewSet, PolicyTemplateListView, PolicyTemplateGenerateView,
+    PublicQuestionnaireView, PublicTrustCenterView,
 )
 from .reports import ControlsStatusReportView
 
@@ -23,6 +24,7 @@ router.register(r'document-revisions', DocumentRevisionViewSet, basename='docume
 router.register(r'assets', AssetViewSet, basename='asset')
 router.register(r'risks', RiskViewSet, basename='risk')
 router.register(r'suppliers', SupplierViewSet, basename='supplier')
+router.register(r'supplier-questionnaires', SupplierQuestionnaireViewSet, basename='supplier-questionnaire')
 router.register(r'controls', ControlViewSet, basename='control')
 router.register(r'incidents', IncidentViewSet, basename='incident')
 router.register(r'audits', AuditViewSet, basename='audit')
@@ -44,6 +46,10 @@ urlpatterns = [
     path('dashboard-summary/', DashboardSummaryView.as_view(), name='dashboard-summary'),
     path('isms-calendar/', IsmsCalendarView.as_view(), name='isms-calendar'),
     path('approval-matrix/', ApprovalMatrixView.as_view(), name='approval-matrix'),
+    path('policy-templates/', PolicyTemplateListView.as_view(), name='policy-templates'),
+    path('policy-templates/<slug:slug>/generate/', PolicyTemplateGenerateView.as_view(), name='policy-template-generate'),
+    path('public/questionnaires/<str:token>/', PublicQuestionnaireView.as_view(), name='public-questionnaire'),
+    path('public/trust-center/', PublicTrustCenterView.as_view(), name='public-trust-center'),
     path('reports/controls-status/', ControlsStatusReportView.as_view(), name='controls-status-report'),
     path('', include(router.urls)),
 ]

@@ -1,7 +1,7 @@
 from django.contrib import admin
 from .models import (
-    Document, DocumentRevision, Risk, Supplier, Control, Incident, Audit, CorrectiveAction,
-    Evidence, Workflow, WorkflowStep, AuditLog, ElectronicSignature, TrainingRecord,
+    Document, DocumentRevision, Risk, Supplier, SupplierQuestionnaire, Control, Incident, Audit,
+    CorrectiveAction, Evidence, Workflow, WorkflowStep, AuditLog, ElectronicSignature, TrainingRecord,
     Asset, Nonconformance, ApprovalMatrixRule, ApprovalRecord, CalendarEvent,
 )
 
@@ -54,6 +54,14 @@ class SupplierAdmin(admin.ModelAdmin):
     list_filter = ('status',)
     search_fields = ('name', 'description', 'contact_name', 'contact_email')
     filter_horizontal = ('risks',)
+
+
+@admin.register(SupplierQuestionnaire)
+class SupplierQuestionnaireAdmin(admin.ModelAdmin):
+    list_display = ('title', 'supplier', 'status', 'sent_at', 'responded_at', 'created_at')
+    list_filter = ('status',)
+    search_fields = ('title', 'supplier__name')
+    readonly_fields = ('access_token',)
 
 
 @admin.register(Control)
