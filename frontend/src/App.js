@@ -1,4 +1,6 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
+import { onAuthExpired } from './api'
+import LoginForm from './LoginForm'
 import RoleManager from './RoleManager'
 import TenantSettingsPanel from './TenantSettingsPanel'
 import MembersPanel from './MembersPanel'
@@ -11,6 +13,8 @@ import CorrectiveActionsPanel from './CorrectiveActionsPanel'
 import EvidencePanel from './EvidencePanel'
 import WorkflowsPanel from './WorkflowsPanel'
 import AuditLogPanel from './AuditLogPanel'
+
+const TOKEN_STORAGE_KEY = 'mtp_token'
 
 const TABS = [
   { key: 'documents', label: 'Documents', Component: DocumentsPanel },
@@ -27,42 +31,72 @@ const TABS = [
   { key: 'roles', label: 'Global Users (superuser)', Component: RoleManager },
 ]
 
+function readStoredToken() {
+  try {
+    return localStorage.getItem(TOKEN_STORAGE_KEY) || ''
+  } catch {
+    // Private browsing / storage disabled — fall back to session-only.
+    return ''
+  }
+}
+
 export default function App() {
-  const [token, setToken] = useState('')
+  const [token, setToken] = useState(readStoredToken)
   const [activeKey, setActiveKey] = useState('documents')
+
+  const handleLogin = (newToken) => {
+    setToken(newToken)
+    try {
+      localStorage.setItem(TOKEN_STORAGE_KEY, newToken)
+    } catch {
+      // ignore — session-only if storage isn't available
+    }
+  }
+
+  const handleLogout = () => {
+    setToken('')
+    try {
+      localStorage.removeItem(TOKEN_STORAGE_KEY)
+    } catch {
+      // ignore
+    }
+  }
+
+  useEffect(() => onAuthExpired(handleLogout), [])
 
   const ActiveComponent = TABS.find((t) => t.key === activeKey).Component
 
   return (
     <div style={{ padding: 20, fontFamily: 'sans-serif' }}>
-      <h1>QMS/ISMS Console (Frontend Stub)</h1>
+      <h1>QMS/ISMS Console</h1>
 
-      <div style={{ marginBottom: 16 }}>
-        <input
-          placeholder="API Token (from POST /api/accounts/token/)"
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
-          style={{ width: 340 }}
-        />
-      </div>
+      {!token ? (
+        <LoginForm onLogin={handleLogin} />
+      ) : (
+        <>
+          <div style={{ marginBottom: 16 }}>
+            <button onClick={handleLogout}>Log out</button>
+          </div>
 
-      <nav style={{ marginBottom: 16, borderBottom: '1px solid #ccc', paddingBottom: 8 }}>
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setActiveKey(t.key)}
-            style={{
-              fontWeight: activeKey === t.key ? 'bold' : 'normal',
-              marginRight: 8,
-              textDecoration: activeKey === t.key ? 'underline' : 'none',
-            }}
-          >
-            {t.label}
-          </button>
-        ))}
-      </nav>
+          <nav style={{ marginBottom: 16, borderBottom: '1px solid #ccc', paddingBottom: 8 }}>
+            {TABS.map((t) => (
+              <button
+                key={t.key}
+                onClick={() => setActiveKey(t.key)}
+                style={{
+                  fontWeight: activeKey === t.key ? 'bold' : 'normal',
+                  marginRight: 8,
+                  textDecoration: activeKey === t.key ? 'underline' : 'none',
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </nav>
 
-      <ActiveComponent token={token} />
+          <ActiveComponent token={token} />
+        </>
+      )}
     </div>
   )
 }

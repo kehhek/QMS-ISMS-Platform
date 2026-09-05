@@ -1,5 +1,15 @@
 const API_BASE = '/api'
 
+// A stale/revoked token means every call starts 401ing. Broadcasting this
+// (rather than each of a dozen panels handling it separately) lets App.js
+// react once, in one place, by logging the user out back to the login form.
+const AUTH_EXPIRED_EVENT = 'mtp:auth-expired'
+
+export function onAuthExpired(handler) {
+  window.addEventListener(AUTH_EXPIRED_EVENT, handler)
+  return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handler)
+}
+
 function authHeaders(token, extra) {
   return {
     ...(token ? { Authorization: `Token ${token}` } : {}),
@@ -10,6 +20,9 @@ function authHeaders(token, extra) {
 async function handleResponse(r) {
   const data = await r.json().catch(() => null)
   if (!r.ok) {
+    if (r.status === 401) {
+      window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT))
+    }
     const message = (data && (data.detail || JSON.stringify(data))) || r.statusText
     throw new Error(message)
   }
