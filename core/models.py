@@ -103,8 +103,16 @@ class Risk(models.Model):
 
 
 class Control(models.Model):
-    """An ISMS control (e.g. an ISO 27001 Annex A control) and how well
-    it's implemented, mapped to the risks it mitigates."""
+    """An ISMS control (e.g. an ISO 27001 Annex A control, or a SOC 2
+    Common Criterion) and how well it's implemented, mapped to the risks
+    it mitigates. See core/data/control_catalogs.py for the standard
+    catalogs and core/management/commands/seed_control_catalogs.py to
+    load them into a tenant."""
+
+    class Framework(models.TextChoices):
+        ISO27001 = 'iso27001', 'ISO/IEC 27001:2022 Annex A'
+        SOC2 = 'soc2', 'SOC 2 (Common Criteria)'
+        CUSTOM = 'custom', 'Custom'
 
     class Status(models.TextChoices):
         NOT_IMPLEMENTED = 'not_implemented', 'Not implemented'
@@ -112,7 +120,8 @@ class Control(models.Model):
         IMPLEMENTED = 'implemented', 'Implemented'
         NOT_APPLICABLE = 'not_applicable', 'Not applicable'
 
-    identifier = models.CharField(max_length=50, unique=True, help_text='e.g. ISO 27001 A.5.1')
+    framework = models.CharField(max_length=20, choices=Framework.choices, default=Framework.ISO27001)
+    identifier = models.CharField(max_length=50, help_text='e.g. A.5.1 (ISO 27001) or CC6.1 (SOC 2)')
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.NOT_IMPLEMENTED)
@@ -122,7 +131,8 @@ class Control(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ['identifier']
+        ordering = ['framework', 'identifier']
+        unique_together = ('framework', 'identifier')
 
     def __str__(self):
         return f'{self.identifier} — {self.name}'

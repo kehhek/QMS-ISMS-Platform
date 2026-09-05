@@ -33,8 +33,8 @@ class RiskAdmin(admin.ModelAdmin):
 
 @admin.register(Control)
 class ControlAdmin(admin.ModelAdmin):
-    list_display = ('identifier', 'name', 'status', 'owner')
-    list_filter = ('status',)
+    list_display = ('framework', 'identifier', 'name', 'status', 'owner')
+    list_filter = ('framework', 'status')
     search_fields = ('identifier', 'name', 'description')
     filter_horizontal = ('risks',)
 

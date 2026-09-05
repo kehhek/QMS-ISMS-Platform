@@ -79,10 +79,16 @@ class RiskViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
 
 
 class ControlViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
-    queryset = Control.objects.all()
     serializer_class = ControlSerializer
     permission_classes = [HasTenantRole]
     allowed_roles = ['admin', 'user']
+
+    def get_queryset(self):
+        qs = Control.objects.all()
+        framework = self.request.query_params.get('framework')
+        if framework:
+            qs = qs.filter(framework=framework)
+        return qs
 
 
 class IncidentViewSet(AuditLoggingMixin, viewsets.ModelViewSet):

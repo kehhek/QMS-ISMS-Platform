@@ -110,6 +110,11 @@ class Command(BaseCommand):
             unpatched_risk = Risk.objects.filter(name='Unpatched servers').first()
             phishing_risk = Risk.objects.filter(name='Phishing').first()
 
+            # These are two real ISO 27001 identifiers (also loaded in full,
+            # unenriched, by seed_control_catalogs) — update_or_create keyed
+            # on (framework, identifier) so this enriches the same catalog
+            # row with demo status/ownership regardless of which seed
+            # command ran first, rather than colliding with or duplicating it.
             controls = [
                 dict(
                     identifier='A.8.8', name='Management of technical vulnerabilities',
@@ -126,7 +131,10 @@ class Command(BaseCommand):
             ]
             for control in controls:
                 risk_names = control.pop('risk_names', [])
-                obj, _ = Control.objects.get_or_create(identifier=control['identifier'], defaults=control)
+                identifier = control.pop('identifier')
+                obj, _ = Control.objects.update_or_create(
+                    framework=Control.Framework.ISO27001, identifier=identifier, defaults=control,
+                )
                 risk_map = {'Unpatched servers': unpatched_risk, 'Phishing': phishing_risk}
                 obj.risks.set([risk_map[n] for n in risk_names if risk_map.get(n)])
 

@@ -41,7 +41,7 @@ class ControlSerializer(serializers.ModelSerializer):
     class Meta:
         model = Control
         fields = (
-            'id', 'identifier', 'name', 'description', 'status', 'owner',
+            'id', 'framework', 'identifier', 'name', 'description', 'status', 'owner',
             'risks', 'created_at', 'updated_at',
         )
         read_only_fields = ('created_at', 'updated_at')
