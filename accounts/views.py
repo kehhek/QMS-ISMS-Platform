@@ -57,7 +57,20 @@ class LoggingObtainAuthToken(ObtainAuthToken):
     """Same as DRF's stock token-obtain view, but records every attempt
     (success or failure) in the audit log — this is the primary login
     path in practice, since the frontend and every curl example in this
-    project use token auth rather than session login."""
+    project use token auth rather than session login.
+
+    authentication_classes = [] is deliberate, not an oversight: this is
+    the "give me credentials to use everywhere else" endpoint, so it must
+    never depend on already having a session. Without this, a leftover
+    Django admin session cookie in the same browser (admin and the
+    frontend share the plain hostname `localhost`, and cookies aren't
+    port-scoped) makes DRF's SessionAuthentication kick in on this exact
+    request — which has no Authorization header yet, since obtaining one
+    is the whole point — and its CSRF check then rejects a plain JSON
+    POST with "CSRF Failed: CSRF token missing." Reproduced directly
+    against this endpoint before this fix; confirmed gone after."""
+
+    authentication_classes = []
 
     def post(self, request, *args, **kwargs):
         serializer = self.serializer_class(data=request.data, context={'request': request})
