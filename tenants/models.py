@@ -58,3 +58,32 @@ class Membership(models.Model):
 
     def __str__(self):
         return f'{self.user} @ {self.tenant} ({self.role})'
+
+
+class DemoRequest(models.Model):
+    """A lead captured from the public home page's "Request a demo" form.
+    Distinct from RegisterView's self-service signup — this doesn't
+    create a tenant or an account, just a note for sales/support to
+    follow up on. Lives in the public schema (tenants is a SHARED_APP):
+    a demo request isn't scoped to any one tenant, and reachable from any
+    schema's search_path the same way User/Client/Membership already
+    are."""
+
+    class Status(models.TextChoices):
+        NEW = 'new', 'New'
+        CONTACTED = 'contacted', 'Contacted'
+        CONVERTED = 'converted', 'Converted'
+        DECLINED = 'declined', 'Declined'
+
+    name = models.CharField(max_length=255)
+    email = models.EmailField()
+    company = models.CharField(max_length=255, blank=True)
+    message = models.TextField(blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.NEW)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.name} ({self.email})'

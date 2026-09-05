@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import { onAuthExpired } from './api'
 import { readStoredToken, writeStoredToken, clearStoredToken } from './tokenStorage'
 import LoginForm from './LoginForm'
-import RoleManager from './RoleManager'
 import TenantSettingsPanel from './TenantSettingsPanel'
 import MembersPanel from './MembersPanel'
 import DashboardPanel from './DashboardPanel'
@@ -18,9 +17,14 @@ import EvidencePanel from './EvidencePanel'
 import WorkflowsPanel from './WorkflowsPanel'
 import AuditLogPanel from './AuditLogPanel'
 import SignaturesPanel from './SignaturesPanel'
+import IsmsCalendarPanel from './IsmsCalendarPanel'
+import AccessRegisterPanel from './AccessRegisterPanel'
+import ApprovalMatrixPanel from './ApprovalMatrixPanel'
+import SecurityAwarenessPanel from './SecurityAwarenessPanel'
 
 const TABS = [
   { key: 'dashboard', label: 'Dashboard', Component: DashboardPanel },
+  { key: 'calendar', label: 'ISMS Calendar', Component: IsmsCalendarPanel },
   { key: 'documents', label: 'Documents', Component: DocumentsPanel },
   { key: 'workflows', label: 'Approvals', Component: WorkflowsPanel },
   { key: 'risks', label: 'Risks', Component: RisksPanel },
@@ -29,12 +33,14 @@ const TABS = [
   { key: 'incidents', label: 'Incidents', Component: IncidentsPanel },
   { key: 'audits', label: 'Audits', Component: AuditsPanel },
   { key: 'capa', label: 'Corrective Actions', Component: CorrectiveActionsPanel },
+  { key: 'awareness', label: 'Security Awareness', Component: SecurityAwarenessPanel },
   { key: 'evidence', label: 'Evidence', Component: EvidencePanel },
   { key: 'signatures', label: 'Signatures', Component: SignaturesPanel },
   { key: 'audit-log', label: 'Audit Log', Component: AuditLogPanel },
   { key: 'members', label: 'Members', Component: MembersPanel },
+  { key: 'access-register', label: 'Access Register', Component: AccessRegisterPanel },
+  { key: 'approval-matrix', label: 'Approval Matrix', Component: ApprovalMatrixPanel },
   { key: 'org-settings', label: 'Org Settings', Component: TenantSettingsPanel },
-  { key: 'roles', label: 'Global Users (superuser)', Component: RoleManager },
 ]
 
 export default function ConsoleApp() {

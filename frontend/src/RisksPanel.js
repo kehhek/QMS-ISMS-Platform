@@ -1,40 +1,23 @@
-import React, { useEffect, useState } from 'react'
-import { apiFetch, unwrapList } from './api'
+import React from 'react'
+import useCrudPanel from './useCrudPanel'
 import StatusBadge from './StatusBadge'
+import ExportCsvButton from './ExportCsvButton'
+
+const STATUS_OPTIONS = ['open', 'mitigating', 'closed']
+const EMPTY_FORM = { name: '', description: '', likelihood: 1, impact: 1 }
 
 export default function RisksPanel({ token }) {
-  const [risks, setRisks] = useState([])
-  const [error, setError] = useState(null)
-  const [form, setForm] = useState({ name: '', description: '', likelihood: 1, impact: 1 })
-
-  const load = () => {
-    apiFetch('/risks/', token)
-      .then((data) => setRisks(unwrapList(data)))
-      .catch((err) => setError(err.message))
-  }
-
-  useEffect(() => {
-    if (token) load()
-    // eslint-disable-next-line
-  }, [token])
-
-  const createRisk = (e) => {
-    e.preventDefault()
-    apiFetch('/risks/', token, { method: 'POST', body: JSON.stringify(form) })
-      .then(() => {
-        setForm({ name: '', description: '', likelihood: 1, impact: 1 })
-        setError(null)
-        load()
-      })
-      .catch((err) => setError(err.message))
-  }
+  const {
+    items: risks, error, form, setForm, create,
+    editingId, editForm, setEditForm, startEdit, cancelEdit, saveEdit, remove,
+  } = useCrudPanel('/risks/', token, EMPTY_FORM)
 
   if (!token) return <p className="empty-state">Set a token above to view risks.</p>
 
   return (
     <div>
       {error && <p className="error-text">{error}</p>}
-      <form onSubmit={createRisk} className="toolbar">
+      <form onSubmit={(e) => { e.preventDefault(); create() }} className="toolbar">
         <input
           placeholder="Name"
           value={form.name}
@@ -60,6 +43,7 @@ export default function RisksPanel({ token }) {
           title="Impact"
         />
         <button type="submit" className="btn-primary">Add Risk</button>
+        <ExportCsvButton token={token} path="/risks/" filename="risks.csv" />
       </form>
       {risks.length === 0 ? (
         <p className="empty-state">No risks yet.</p>
@@ -73,18 +57,63 @@ export default function RisksPanel({ token }) {
               <th>Impact</th>
               <th>Owner</th>
               <th>Target date</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {risks.map((r) => (
-              <tr key={r.id}>
-                <td>{r.name}</td>
-                <td><StatusBadge value={r.status} /></td>
-                <td>{r.likelihood}</td>
-                <td>{r.impact}</td>
-                <td>{r.owner || '—'}</td>
-                <td>{r.target_date || '—'}</td>
-              </tr>
+              editingId === r.id ? (
+                <tr key={r.id}>
+                  <td>
+                    <input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
+                  </td>
+                  <td>
+                    <select value={editForm.status} onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}>
+                      {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </td>
+                  <td>
+                    <input
+                      type="number" min="1" max="5" style={{ width: 50 }}
+                      value={editForm.likelihood}
+                      onChange={(e) => setEditForm({ ...editForm, likelihood: Number(e.target.value) })}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      type="number" min="1" max="5" style={{ width: 50 }}
+                      value={editForm.impact}
+                      onChange={(e) => setEditForm({ ...editForm, impact: Number(e.target.value) })}
+                    />
+                  </td>
+                  <td>
+                    <input value={editForm.owner} onChange={(e) => setEditForm({ ...editForm, owner: e.target.value })} style={{ width: 100 }} />
+                  </td>
+                  <td>
+                    <input
+                      type="date" value={editForm.target_date || ''}
+                      onChange={(e) => setEditForm({ ...editForm, target_date: e.target.value || null })}
+                    />
+                  </td>
+                  <td>
+                    <button onClick={saveEdit} style={{ marginRight: 4 }}>Save</button>
+                    <button onClick={cancelEdit}>Cancel</button>
+                  </td>
+                </tr>
+              ) : (
+                <tr key={r.id}>
+                  <td>{r.name}</td>
+                  <td><StatusBadge value={r.status} /></td>
+                  <td>{r.likelihood}</td>
+                  <td>{r.impact}</td>
+                  <td>{r.owner || '—'}</td>
+                  <td>{r.target_date || '—'}</td>
+                  <td>
+                    <button onClick={() => startEdit(r)} style={{ marginRight: 4 }}>Edit</button>
+                    <button onClick={() => remove(r, `"${r.name}"`)}>Delete</button>
+                  </td>
+                </tr>
+              )
             ))}
           </tbody>
         </table>

@@ -1,17 +1,36 @@
 import React, { useEffect, useState } from 'react'
 import { apiFetch, unwrapList } from './api'
+import useCrudPanel from './useCrudPanel'
+
+const EMPTY_FORM = { title: '', description: '', content_type: '', object_id: '' }
 
 export default function EvidencePanel({ token }) {
-  const [evidence, setEvidence] = useState([])
   const [contentTypes, setContentTypes] = useState([])
-  const [error, setError] = useState(null)
-  const [form, setForm] = useState({ title: '', description: '', content_type: '', object_id: '' })
   const [file, setFile] = useState(null)
+  const {
+    items: evidence, error, setError, form, setForm, load,
+    editingId, editForm, setEditForm, startEdit, cancelEdit, remove,
+  } = useCrudPanel('/evidence/', token, EMPTY_FORM)
 
-  const load = () => {
-    apiFetch('/evidence/', token)
-      .then((data) => setEvidence(unwrapList(data)))
+  // Not the hook's generic saveEdit: editForm.file is the file's URL
+  // string (from the list response), and EvidenceSerializer's `file` is a
+  // real FileField — sending that string back as "file" would fail
+  // validation ("not a file"). Only title/description are editable here.
+  const saveEvidenceEdit = () => {
+    apiFetch(`/evidence/${editingId}/`, token, {
+      method: 'PATCH',
+      body: JSON.stringify({ title: editForm.title, description: editForm.description }),
+    })
+      .then(() => {
+        cancelEdit()
+        setError(null)
+        load()
+      })
       .catch((err) => setError(err.message))
+  }
+
+  useEffect(() => {
+    if (!token) return
     apiFetch('/content-types/', token)
       .then((data) => {
         setContentTypes(data)
@@ -20,10 +39,6 @@ export default function EvidencePanel({ token }) {
         }
       })
       .catch(() => setContentTypes([]))
-  }
-
-  useEffect(() => {
-    if (token) load()
     // eslint-disable-next-line
   }, [token])
 
@@ -81,7 +96,8 @@ export default function EvidencePanel({ token }) {
       {error && <p className="error-text">{error}</p>}
       <p className="panel-hint">
         Files are encrypted at rest. "Attach to" + ID identifies the record this is evidence for
-        (e.g. pick "incident" and the incident's numeric id from its own tab).
+        (e.g. pick "incident" and the incident's numeric id from its own tab). Only the title and
+        description can be edited after upload — re-upload as a new entry to replace the file itself.
       </p>
       <form onSubmit={upload} className="toolbar">
         <input
@@ -116,21 +132,51 @@ export default function EvidencePanel({ token }) {
           <thead>
             <tr>
               <th>Title</th>
+              <th>Description</th>
               <th>Attached To</th>
               <th>Uploaded By</th>
               <th>Uploaded At</th>
               <th>File</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {evidence.map((ev) => (
-              <tr key={ev.id}>
-                <td>{ev.title}</td>
-                <td>{ev.content_type_name} #{ev.object_id}</td>
-                <td>{ev.uploaded_by_username || '—'}</td>
-                <td>{new Date(ev.uploaded_at).toLocaleString()}</td>
-                <td><button onClick={() => download(ev)}>Download</button></td>
-              </tr>
+              editingId === ev.id ? (
+                <tr key={ev.id}>
+                  <td>
+                    <input value={editForm.title} onChange={(e) => setEditForm({ ...editForm, title: e.target.value })} />
+                  </td>
+                  <td>
+                    <input
+                      value={editForm.description}
+                      onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                      style={{ width: 160 }}
+                    />
+                  </td>
+                  <td>{ev.content_type_name} #{ev.object_id}</td>
+                  <td>{ev.uploaded_by_username || '—'}</td>
+                  <td>{new Date(ev.uploaded_at).toLocaleString()}</td>
+                  <td><button onClick={() => download(ev)}>Download</button></td>
+                  <td>
+                    <button onClick={saveEvidenceEdit} style={{ marginRight: 4 }}>Save</button>
+                    <button onClick={cancelEdit}>Cancel</button>
+                  </td>
+                </tr>
+              ) : (
+                <tr key={ev.id}>
+                  <td>{ev.title}</td>
+                  <td>{ev.description || '—'}</td>
+                  <td>{ev.content_type_name} #{ev.object_id}</td>
+                  <td>{ev.uploaded_by_username || '—'}</td>
+                  <td>{new Date(ev.uploaded_at).toLocaleString()}</td>
+                  <td><button onClick={() => download(ev)}>Download</button></td>
+                  <td>
+                    <button onClick={() => startEdit(ev)} style={{ marginRight: 4 }}>Edit</button>
+                    <button onClick={() => remove(ev, `"${ev.title}"`)}>Delete</button>
+                  </td>
+                </tr>
+              )
             ))}
           </tbody>
         </table>

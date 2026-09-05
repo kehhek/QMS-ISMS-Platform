@@ -133,11 +133,28 @@ USE_TZ = True
 
 STATIC_URL = '/static/'
 
-# Evidence uploads. Local disk for now (the repo dir is bind-mounted into
-# the web container, so files survive restarts); swap for S3/MinIO storage
-# before this needs to run anywhere beyond one dev host.
+# Evidence uploads. Local disk by default (fine for one dev host, or one
+# app server replica) — set AWS_STORAGE_BUCKET_NAME (+ AWS creds) to
+# switch to S3 instead, needed as soon as there's more than one app
+# server replica, since local disk isn't shared between them. See
+# core/storage.py get_evidence_storage() for the actual switch.
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+AWS_STORAGE_BUCKET_NAME = os.environ.get('AWS_STORAGE_BUCKET_NAME', '')
+if AWS_STORAGE_BUCKET_NAME:
+    AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID', '')
+    AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY', '')
+    AWS_S3_REGION_NAME = os.environ.get('AWS_S3_REGION_NAME', 'us-east-1')
+    # Optional: point at an S3-compatible service (MinIO, R2, etc.)
+    # instead of AWS itself.
+    AWS_S3_ENDPOINT_URL = os.environ.get('AWS_S3_ENDPOINT_URL', '') or None
+    # Evidence is already Fernet-encrypted before it reaches S3 and is
+    # meant to be fetched only through the API (which streams it back
+    # authenticated), never linked to directly — private objects, no
+    # public querystring auth URLs.
+    AWS_DEFAULT_ACL = 'private'
+    AWS_QUERYSTRING_AUTH = False
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -176,6 +193,13 @@ REST_FRAMEWORK = {
         # Public self-service signup: each call provisions a real Postgres
         # schema, a much heavier operation than a normal anonymous read.
         'registration': '5/hour',
+        # Public "request a demo" lead form — cheap to process, but still
+        # throttled harder than general anon reads to deter spam/scraping.
+        'demo-request': '10/hour',
+        # Forgot-password request/confirm — throttled to slow down both
+        # inbox-flooding (repeated requests) and token-guessing (repeated
+        # confirm attempts), same reasoning as 'registration'.
+        'password-reset': '10/hour',
     },
 }
 
@@ -186,9 +210,14 @@ CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', CELERY_BROKER_UR
 from celery.schedules import crontab
 
 CELERY_BEAT_SCHEDULE = {
-    'run-audit-every-minute': {
-        'task': 'core.tasks.run_audit',
-        'schedule': 60.0,
+    # Replaces the old 'run-audit-every-minute' placeholder (which just
+    # printed a string every 60 seconds and did nothing) — this actually
+    # scans every tenant for overdue ISMS Calendar items and emails a
+    # digest to that tenant's admins/auditors. Once a day, not once a
+    # minute: overdue-ness doesn't change fast enough to justify more.
+    'isms-overdue-digest': {
+        'task': 'core.tasks.send_overdue_isms_digest',
+        'schedule': crontab(hour=7, minute=0),
     },
     'daily-tenant-backup': {
         'task': 'tenants.tasks.run_daily_backups',
@@ -202,6 +231,34 @@ CELERY_BEAT_SCHEDULE = {
 # isn't disposable.
 BACKUP_ROOT = BASE_DIR / 'backups'
 BACKUP_RETENTION_COUNT = int(os.environ.get('BACKUP_RETENTION_COUNT', '14'))
+
+# Email — console backend in DEBUG (prints to the web container's stdout,
+# no external credentials needed for local dev); real SMTP in production
+# via env vars. Every call site treats sending as best-effort (caught and
+# logged, never raised) — a broken SMTP config shouldn't block inviting a
+# member or submitting a demo request.
+if DEBUG:
+    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+else:
+    EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = os.environ.get('EMAIL_HOST', 'localhost')
+EMAIL_PORT = int(os.environ.get('EMAIL_PORT', '587'))
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True') == 'True'
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'no-reply@example.com')
+
+# Where "someone submitted a demo request" notifications go — your team's
+# inbox, not the requester's. Left blank, demo requests still land in
+# Django admin; they just won't page anyone.
+DEMO_REQUEST_NOTIFY_EMAIL = os.environ.get('DEMO_REQUEST_NOTIFY_EMAIL', '')
+
+# The origin the React app is actually served from — used to build the
+# password-reset link emailed to users (accounts/views.py
+# PasswordResetRequestView). Left blank, that view falls back to the
+# API's own request origin, which works but won't point at the frontend
+# in a setup where they're on different hosts/ports (e.g. local dev).
+FRONTEND_BASE_URL = os.environ.get('FRONTEND_BASE_URL', '').rstrip('/')
 
 # CORS - permissive only in DEBUG; set CORS_ALLOWED_ORIGINS (comma-separated) for production
 CORS_ALLOW_ALL_ORIGINS = DEBUG

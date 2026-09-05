@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { apiFetch, apiFetchUrl, unwrapList } from './api'
+import ExportCsvButton from './ExportCsvButton'
 
 export default function SignaturesPanel({ token }) {
   const [page, setPage] = useState(null)
@@ -27,6 +28,9 @@ export default function SignaturesPanel({ token }) {
         21 CFR Part 11 electronic signatures — each one required re-entering a password at the
         moment of signing. Append-only; "Valid" confirms the record hasn't been tampered with since signing.
       </p>
+      <div className="toolbar">
+        <ExportCsvButton token={token} path="/signatures/" filename="signatures.csv" />
+      </div>
       {entries.length === 0 ? (
         <p className="empty-state">No signatures yet — approve or reject a workflow step to create one.</p>
       ) : (

@@ -61,12 +61,32 @@ class RegistrationTests(TestCase):
         membership = Membership.objects.get(user=user, tenant=tenant)
         self.assertEqual(membership.role, Membership.Role.ADMIN)
 
+        # Regression check: accounts.User is a SHARED_APP model (global,
+        # not per-tenant), so is_staff/is_superuser used to make every
+        # self-registered tenant's founder a platform-wide Django
+        # superuser — able to log into /admin/ and read/edit every OTHER
+        # tenant's users, domains, and memberships. Membership.role=ADMIN
+        # is the correct, tenant-scoped way to grant them admin access.
+        self.assertFalse(user.is_staff)
+        self.assertFalse(user.is_superuser)
+
         # The returned token actually authenticates against the new tenant.
         dashboard = api.get(
             '/api/dashboard-summary/', HTTP_HOST='acme-corp.localhost',
             HTTP_AUTHORIZATION=f'Token {response.data["token"]}',
         )
         self.assertEqual(dashboard.status_code, 200)
+
+        # Regression check: every newly registered tenant must start with
+        # the full ISO 27001 + SOC 2 control catalog already loaded — a
+        # bug report ("all the controls are missing from the control
+        # page") traced back to tenants never having this seeded at all.
+        controls = api.get(
+            '/api/controls/?page_size=200', HTTP_HOST='acme-corp.localhost',
+            HTTP_AUTHORIZATION=f'Token {response.data["token"]}',
+        )
+        self.assertEqual(controls.status_code, 200)
+        self.assertEqual(controls.data['count'], 126)
 
     def test_duplicate_subdomain_is_rejected(self):
         api = APIClient()

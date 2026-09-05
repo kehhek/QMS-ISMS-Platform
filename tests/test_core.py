@@ -47,6 +47,36 @@ class DocumentVersioningTests(TestCase):
             self.assertEqual(doc.version, 1)
             self.assertEqual(DocumentRevision.objects.count(), 0)
 
+    def test_patching_status_via_the_api_does_not_bypass_the_approval_workflow(self):
+        # Regression test: status used to be a plain writable serializer
+        # field, so anyone with document-write access could PATCH straight
+        # to "approved" without ever going through WorkflowStepViewSet's
+        # password-verified electronic signature. It's read-only now —
+        # settable only by the workflow completing (see core/views.py).
+        tenant = make_tenant('coretestdocstatusbypass')
+        with schema_context(tenant.schema_name):
+            from django.contrib.auth import get_user_model
+            from tenants.models import Membership
+            from core.models import Document
+
+            User = get_user_model()
+            user = User.objects.create_user('doc_editor', 'de@example.com', 'pass12345')
+            Membership.objects.create(user=user, tenant=tenant, role=Membership.Role.USER)
+            doc = Document.objects.create(title='Policy', content='v1', status=Document.Status.DRAFT)
+
+        api = APIClient()
+        api.force_authenticate(user=user)
+        resp = api.patch(
+            f'/api/documents/{doc.pk}/', {'status': 'approved'},
+            format='json', HTTP_HOST=f'{tenant.schema_name}.localhost',
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['status'], 'draft')
+
+        with schema_context(tenant.schema_name):
+            doc.refresh_from_db()
+            self.assertEqual(doc.status, Document.Status.DRAFT)
+
 
 class CorrectiveActionTests(TestCase):
     def test_corrective_action_links_to_audit_and_risk(self):

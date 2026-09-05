@@ -18,7 +18,9 @@ services:
 
   web:
     build: .
-    command: gunicorn project.wsgi:application --bind 0.0.0.0:8000
+    # See the Dockerfile's CMD comment — override worker count via
+    # GUNICORN_CMD_ARGS in the environment block below if needed locally.
+    command: gunicorn project.wsgi:application --bind 0.0.0.0:8000 --workers 3
     volumes:
       - .:/app
     ports:

@@ -6,8 +6,9 @@ from .views import (
     DocumentViewSet, DocumentRevisionViewSet, RiskViewSet, SupplierViewSet, ControlViewSet,
     IncidentViewSet, AuditViewSet, CorrectiveActionViewSet, EvidenceViewSet, WorkflowViewSet,
     WorkflowStepViewSet, AuditLogViewSet, ElectronicSignatureViewSet, CoreContentTypesView,
-    DashboardSummaryView,
+    DashboardSummaryView, TrainingRecordViewSet, IsmsCalendarView, ApprovalMatrixView,
 )
+from .reports import ControlsStatusReportView
 
 
 def ping(request):
@@ -28,10 +29,14 @@ router.register(r'workflows', WorkflowViewSet, basename='workflow')
 router.register(r'workflow-steps', WorkflowStepViewSet, basename='workflow-step')
 router.register(r'audit-log', AuditLogViewSet, basename='audit-log')
 router.register(r'signatures', ElectronicSignatureViewSet, basename='signature')
+router.register(r'training-records', TrainingRecordViewSet, basename='training-record')
 
 urlpatterns = [
     path('ping/', ping),
     path('content-types/', CoreContentTypesView.as_view(), name='core-content-types'),
     path('dashboard-summary/', DashboardSummaryView.as_view(), name='dashboard-summary'),
+    path('isms-calendar/', IsmsCalendarView.as_view(), name='isms-calendar'),
+    path('approval-matrix/', ApprovalMatrixView.as_view(), name='approval-matrix'),
+    path('reports/controls-status/', ControlsStatusReportView.as_view(), name='controls-status-report'),
     path('', include(router.urls)),
 ]

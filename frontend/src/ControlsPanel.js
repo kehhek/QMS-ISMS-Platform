@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import { apiFetch, apiFetchUrl, unwrapList } from './api'
+import { apiFetch, apiFetchUrl, unwrapList, downloadFile } from './api'
+import ExportCsvButton from './ExportCsvButton'
 
 const STATUS_OPTIONS = ['not_implemented', 'partial', 'implemented', 'not_applicable']
 
@@ -33,13 +34,19 @@ export default function ControlsPanel({ token }) {
   }
 
   if (!token) return <p className="empty-state">Set a token above to view controls.</p>
-  if (error) return <p className="error-text">{error}</p>
+  if (error && !page) return <p className="error-text">{error}</p>
   if (!page) return <p className="empty-state">Loading…</p>
 
   const controls = unwrapList(page)
 
+  const downloadPdf = () => {
+    setError(null)
+    downloadFile('/reports/controls-status/', token, 'controls-status-report.pdf').catch((err) => setError(err.message))
+  }
+
   return (
     <div>
+      {error && <p className="error-text">{error}</p>}
       <div className="toolbar">
         <span className="field-label">Framework:</span>
         <select value={framework} onChange={(e) => setFramework(e.target.value)}>
@@ -47,6 +54,8 @@ export default function ControlsPanel({ token }) {
           <option value="iso27001">ISO 27001</option>
           <option value="soc2">SOC 2</option>
         </select>
+        <ExportCsvButton token={token} path="/controls/" filename="controls.csv" />
+        <button type="button" onClick={downloadPdf}>Download PDF Report</button>
       </div>
       <table>
         <thead>

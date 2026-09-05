@@ -1,7 +1,7 @@
 from django.contrib import admin
 from .models import (
     Document, DocumentRevision, Risk, Supplier, Control, Incident, Audit, CorrectiveAction,
-    Evidence, Workflow, WorkflowStep, AuditLog, ElectronicSignature,
+    Evidence, Workflow, WorkflowStep, AuditLog, ElectronicSignature, TrainingRecord,
 )
 
 
@@ -67,6 +67,17 @@ class CorrectiveActionAdmin(admin.ModelAdmin):
     list_display = ('title', 'action_type', 'status', 'owner', 'audit', 'risk', 'incident', 'due_date', 'closed_date')
     list_filter = ('action_type', 'status')
     search_fields = ('title', 'description')
+
+
+@admin.register(TrainingRecord)
+class TrainingRecordAdmin(admin.ModelAdmin):
+    list_display = ('user', 'title', 'status', 'assigned_date', 'due_date', 'completed_date', 'is_overdue')
+    list_filter = ('status',)
+    search_fields = ('title', 'user__username')
+
+    def is_overdue(self, obj):
+        return obj.is_overdue
+    is_overdue.boolean = True
 
 
 @admin.register(Evidence)

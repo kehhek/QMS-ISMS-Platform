@@ -234,3 +234,236 @@ class PasswordAgeTests(TestCase):
 
         user.password_changed_at = timezone.now() - timezone.timedelta(days=100)
         self.assertTrue(user.password_expired(90))
+
+
+class PasswordExpiryEnforcementTests(TestCase):
+    """Part 11 §11.300(b): periodic password revision — expired() being
+    merely *tracked* isn't enough; login must actually block on it, and
+    there must be a way to get unblocked without an admin's help."""
+
+    def setUp(self):
+        # AnonRateThrottle's state lives in Django's cache, not the DB —
+        # survives TestCase's rollback and accumulates across every other
+        # test in the run that hits an anon-throttled endpoint. See the
+        # identical note in test_registration.py.
+        cache.clear()
+        self.tenant = make_tenant('pwexpiry')
+        self.host = f'{self.tenant.schema_name}.localhost'
+        self.user = make_member(self.tenant, 'expiry_user', Membership.Role.USER, password='OldPassword123')
+        self.user.password_changed_at = timezone.now() - timezone.timedelta(days=100)
+        self.user.save()
+
+    def test_token_login_is_blocked_for_an_expired_password(self):
+        api = APIClient()
+        resp = api.post(
+            '/api/accounts/token/', {'username': 'expiry_user', 'password': 'OldPassword123'},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(resp.data['password_expired'])
+
+    def test_session_login_is_blocked_for_an_expired_password(self):
+        api = APIClient()
+        resp = api.post(
+            '/api/accounts/login/', {'username': 'expiry_user', 'password': 'OldPassword123'},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(resp.data['password_expired'])
+
+    def test_wrong_old_password_is_rejected_by_the_expired_change_flow(self):
+        api = APIClient()
+        resp = api.post(
+            '/api/accounts/password/change-expired/',
+            {'username': 'expiry_user', 'old_password': 'totally-wrong', 'new_password': 'BrandNewPass123'},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_weak_new_password_is_rejected_by_the_expired_change_flow(self):
+        api = APIClient()
+        resp = api.post(
+            '/api/accounts/password/change-expired/',
+            {'username': 'expiry_user', 'old_password': 'OldPassword123', 'new_password': '12345'},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('new_password', resp.data)
+
+    def test_changing_an_expired_password_issues_a_working_token(self):
+        api = APIClient()
+        resp = api.post(
+            '/api/accounts/password/change-expired/',
+            {'username': 'expiry_user', 'old_password': 'OldPassword123', 'new_password': 'BrandNewPass123'},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        token = resp.data['token']
+
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.password_expired(90))
+
+        # The new token actually works now.
+        dashboard = api.get(
+            '/api/dashboard-summary/', HTTP_HOST=self.host, HTTP_AUTHORIZATION=f'Token {token}',
+        )
+        self.assertEqual(dashboard.status_code, 200)
+
+        # And the old password no longer does.
+        old_login = api.post(
+            '/api/accounts/token/', {'username': 'expiry_user', 'password': 'OldPassword123'},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(old_login.status_code, 400)
+
+
+class ChangePasswordViewTests(TestCase):
+    def setUp(self):
+        self.tenant = make_tenant('pwchange')
+        self.host = f'{self.tenant.schema_name}.localhost'
+        self.user = make_member(self.tenant, 'change_user', Membership.Role.USER, password='CurrentPass123')
+
+    def test_authenticated_user_can_change_their_own_password(self):
+        api = APIClient()
+        api.force_authenticate(user=self.user)
+        resp = api.post(
+            '/api/accounts/password/change/',
+            {'old_password': 'CurrentPass123', 'new_password': 'FreshPassword456'},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password('FreshPassword456'))
+
+    def test_wrong_old_password_is_rejected(self):
+        api = APIClient()
+        api.force_authenticate(user=self.user)
+        resp = api.post(
+            '/api/accounts/password/change/',
+            {'old_password': 'nope', 'new_password': 'FreshPassword456'},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_requires_authentication(self):
+        api = APIClient()
+        resp = api.post(
+            '/api/accounts/password/change/',
+            {'old_password': 'CurrentPass123', 'new_password': 'FreshPassword456'},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 401)
+
+
+class ForgotPasswordFlowTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.tenant = make_tenant('forgotpw')
+        self.host = f'{self.tenant.schema_name}.localhost'
+        self.user = make_member(self.tenant, 'forgot_user', Membership.Role.USER, password='OriginalPass123')
+        self.user.email = 'forgot_user@example.com'
+        self.user.save()
+
+    def _request_reset(self, username):
+        api = APIClient()
+        return api.post(
+            '/api/accounts/password/reset/', {'username': username}, format='json', HTTP_HOST=self.host,
+        )
+
+    def test_request_always_returns_the_same_generic_response(self):
+        real = self._request_reset('forgot_user')
+        fake = self._request_reset('no_such_user_at_all')
+        self.assertEqual(real.status_code, 200)
+        self.assertEqual(fake.status_code, 200)
+        self.assertEqual(real.data, fake.data)
+
+    def test_a_real_request_sends_exactly_one_email_with_a_working_link(self):
+        resp = self._request_reset('forgot_user')
+        self.assertEqual(resp.status_code, 200)
+
+        from django.core import mail
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ['forgot_user@example.com'])
+        self.assertIn('uid=', mail.outbox[0].body)
+        self.assertIn('token=', mail.outbox[0].body)
+
+    def test_a_fake_username_sends_no_email(self):
+        self._request_reset('no_such_user_at_all')
+        from django.core import mail
+        self.assertEqual(len(mail.outbox), 0)
+
+    def _extract_uid_and_token(self, email_body):
+        import re
+        uid = re.search(r'uid=([^&\s]+)', email_body).group(1)
+        token = re.search(r'token=([^&\s]+)', email_body).group(1)
+        return uid, token
+
+    def test_confirming_with_the_emailed_link_sets_a_working_new_password(self):
+        self._request_reset('forgot_user')
+        from django.core import mail
+        uid, token = self._extract_uid_and_token(mail.outbox[0].body)
+
+        api = APIClient()
+        resp = api.post(
+            '/api/accounts/password/reset-confirm/',
+            {'uid': uid, 'token': token, 'new_password': 'BrandNewPass789'},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        new_token = resp.data['token']
+
+        dashboard = api.get(
+            '/api/dashboard-summary/', HTTP_HOST=self.host, HTTP_AUTHORIZATION=f'Token {new_token}',
+        )
+        self.assertEqual(dashboard.status_code, 200)
+
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password('BrandNewPass789'))
+
+    def test_a_used_token_cannot_be_replayed(self):
+        self._request_reset('forgot_user')
+        from django.core import mail
+        uid, token = self._extract_uid_and_token(mail.outbox[0].body)
+
+        api = APIClient()
+        first = api.post(
+            '/api/accounts/password/reset-confirm/',
+            {'uid': uid, 'token': token, 'new_password': 'FirstNewPass123'},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(first.status_code, 200)
+
+        replay = api.post(
+            '/api/accounts/password/reset-confirm/',
+            {'uid': uid, 'token': token, 'new_password': 'SecondNewPass456'},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(replay.status_code, 400)
+
+    def test_a_tampered_token_is_rejected(self):
+        self._request_reset('forgot_user')
+        from django.core import mail
+        uid, _token = self._extract_uid_and_token(mail.outbox[0].body)
+
+        api = APIClient()
+        resp = api.post(
+            '/api/accounts/password/reset-confirm/',
+            {'uid': uid, 'token': 'not-a-real-token', 'new_password': 'BrandNewPass789'},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_weak_new_password_is_rejected_on_confirm(self):
+        self._request_reset('forgot_user')
+        from django.core import mail
+        uid, token = self._extract_uid_and_token(mail.outbox[0].body)
+
+        api = APIClient()
+        resp = api.post(
+            '/api/accounts/password/reset-confirm/',
+            {'uid': uid, 'token': token, 'new_password': '12345'},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('new_password', resp.data)

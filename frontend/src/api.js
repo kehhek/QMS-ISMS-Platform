@@ -73,3 +73,29 @@ export function unwrapList(data) {
   if (data && Array.isArray(data.results)) return data.results
   return []
 }
+
+// Downloads a file from an authenticated API endpoint (CSV export, PDF
+// report, evidence). A plain <a href> doesn't carry the Authorization
+// header and — through the dev proxy — can be intercepted as an SPA
+// navigation instead of reaching the API; fetching as a blob sidesteps
+// both problems, the same pattern EvidencePanel's download() established.
+export function downloadFile(path, token, filename) {
+  return fetch(`${API_BASE}${path}`, { headers: authHeaders(token) })
+    .then(async (r) => {
+      if (!r.ok) {
+        const data = await r.json().catch(() => null)
+        throw new Error(formatApiError(data, `Download failed (${r.status})`))
+      }
+      return r.blob()
+    })
+    .then((blob) => {
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    })
+}

@@ -10,15 +10,18 @@ from rest_framework.views import APIView
 from tenants.permissions import HasTenantRole, HasTenantRoleStrict, get_role
 
 from .audit import log_action
+from .calendar import get_isms_calendar_events
+from .export import CsvExportMixin
 from .signatures import create_signature
 from .models import (
     Document, DocumentRevision, Risk, Supplier, Control, Incident, Audit, CorrectiveAction,
-    Evidence, Workflow, WorkflowStep, AuditLog, ElectronicSignature,
+    Evidence, Workflow, WorkflowStep, AuditLog, ElectronicSignature, TrainingRecord,
 )
 from .serializers import (
     DocumentSerializer, DocumentRevisionSerializer, RiskSerializer, SupplierSerializer, ControlSerializer,
     IncidentSerializer, AuditSerializer, CorrectiveActionSerializer, EvidenceSerializer,
     WorkflowSerializer, WorkflowStepSerializer, AuditLogSerializer, ElectronicSignatureSerializer,
+    TrainingRecordSerializer,
 )
 
 
@@ -48,7 +51,7 @@ class AuditLoggingMixin:
         instance.delete()
 
 
-class DocumentViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
+class DocumentViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
     queryset = Document.objects.all()
     serializer_class = DocumentSerializer
     permission_classes = [HasTenantRole]
@@ -75,21 +78,21 @@ class DocumentRevisionViewSet(viewsets.ReadOnlyModelViewSet):
         return qs
 
 
-class RiskViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
+class RiskViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
     queryset = Risk.objects.all()
     serializer_class = RiskSerializer
     permission_classes = [HasTenantRole]
     allowed_roles = ['admin', 'user']
 
 
-class SupplierViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
+class SupplierViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
     queryset = Supplier.objects.all()
     serializer_class = SupplierSerializer
     permission_classes = [HasTenantRole]
     allowed_roles = ['admin', 'user']
 
 
-class ControlViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
+class ControlViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
     serializer_class = ControlSerializer
     permission_classes = [HasTenantRole]
     allowed_roles = ['admin', 'user']
@@ -102,7 +105,7 @@ class ControlViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
         return qs
 
 
-class IncidentViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
+class IncidentViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
     queryset = Incident.objects.all()
     serializer_class = IncidentSerializer
     permission_classes = [HasTenantRole]
@@ -114,14 +117,14 @@ class IncidentViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
         self._log(AuditLog.Action.CREATE, instance)
 
 
-class AuditViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
+class AuditViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
     queryset = Audit.objects.all()
     serializer_class = AuditSerializer
     permission_classes = [HasTenantRole]
     allowed_roles = ['admin', 'auditor']
 
 
-class CorrectiveActionViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
+class CorrectiveActionViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
     queryset = CorrectiveAction.objects.all()
     serializer_class = CorrectiveActionSerializer
     permission_classes = [HasTenantRole]
@@ -139,8 +142,26 @@ class EvidenceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
         instance = serializer.save(uploaded_by=self.request.user)
         self._log(AuditLog.Action.CREATE, instance)
 
+    @action(detail=True, methods=['get'])
+    def download(self, request, pk=None):
+        """Streams the decrypted file back through our own authentication
+        and per-tenant RBAC (get_object() already enforced both) —
+        deliberately NOT a redirect to the storage backend's own URL.
+        `/media/...` (local disk, DEBUG only) is served with no auth check
+        at all, and an S3 object private enough to need real access
+        control can't be handed out as a plain fetchable link either.
+        Works identically for local disk and S3 since both storage
+        backends' .open() already decrypts (core/storage.py)."""
+        from django.http import FileResponse
 
-class WorkflowViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
+        evidence = self.get_object()
+        return FileResponse(
+            evidence.file.open('rb'), as_attachment=True,
+            filename=evidence.title or evidence.file.name.rsplit('/', 1)[-1],
+        )
+
+
+class WorkflowViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
     queryset = Workflow.objects.prefetch_related('steps').all()
     serializer_class = WorkflowSerializer
     permission_classes = [HasTenantRole]
@@ -149,6 +170,58 @@ class WorkflowViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     def perform_create(self, serializer):
         instance = serializer.save(created_by=self.request.user)
         self._log(AuditLog.Action.CREATE, instance)
+
+
+class TrainingRecordViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
+    """Security awareness training tracking (ISO 27001 A.6.3). Any tenant
+    member can read (visibility into who's trained is part of the point
+    of a register) and mark their OWN record complete via the `complete`
+    action; assigning/editing/deleting records is admin/auditor only.
+
+    No `allowed_roles` class attribute here deliberately — that would
+    gate every write (including `complete` on one's own record) at the
+    permission-check layer before this view's code ever runs. Instead
+    HasTenantRole is left permissive for any-member writes, and the
+    admin/auditor restriction on assignment is enforced explicitly in
+    perform_create/update/destroy below.
+    """
+
+    queryset = TrainingRecord.objects.select_related('user').all()
+    serializer_class = TrainingRecordSerializer
+    permission_classes = [HasTenantRole]
+
+    def _require_admin_or_auditor(self, request):
+        if request.user.is_superuser:
+            return
+        if get_role(request.user) not in ('admin', 'auditor'):
+            raise PermissionDenied('Only admins/auditors can assign or edit training records.')
+
+    def perform_create(self, serializer):
+        self._require_admin_or_auditor(self.request)
+        instance = serializer.save()
+        self._log(AuditLog.Action.CREATE, instance)
+
+    def perform_update(self, serializer):
+        self._require_admin_or_auditor(self.request)
+        instance = serializer.save()
+        self._log(AuditLog.Action.UPDATE, instance)
+
+    def perform_destroy(self, instance):
+        self._require_admin_or_auditor(self.request)
+        self._log(AuditLog.Action.DELETE, instance)
+        instance.delete()
+
+    @action(detail=True, methods=['post'])
+    def complete(self, request, pk=None):
+        record = self.get_object()
+        if record.user_id != request.user.pk and not request.user.is_superuser:
+            if get_role(request.user) not in ('admin', 'auditor'):
+                raise PermissionDenied('You can only complete your own training record.')
+        record.status = TrainingRecord.Status.COMPLETED
+        record.completed_date = timezone.now().date()
+        record.save()
+        self._log(AuditLog.Action.UPDATE, record)
+        return Response(TrainingRecordSerializer(record).data)
 
 
 class WorkflowStepViewSet(viewsets.ReadOnlyModelViewSet):
@@ -302,7 +375,7 @@ class DashboardSummaryView(APIView):
         })
 
 
-class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
+class AuditLogViewSet(CsvExportMixin, viewsets.ReadOnlyModelViewSet):
     """Read-only by design — AuditLog rows are only ever written by
     AuditLoggingMixin / the workflow decide action, never via a client
     POST. Visibility is restricted to admins/auditors, unlike the other
@@ -314,7 +387,7 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     allowed_roles = ['admin', 'auditor']
 
 
-class ElectronicSignatureViewSet(viewsets.ReadOnlyModelViewSet):
+class ElectronicSignatureViewSet(CsvExportMixin, viewsets.ReadOnlyModelViewSet):
     """Read-only — signatures are only ever created by
     WorkflowStepViewSet.decide() after password re-verification, never via
     a direct client POST. Any tenant member can view the signature record
@@ -324,3 +397,89 @@ class ElectronicSignatureViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = ElectronicSignature.objects.select_related('user', 'content_type').all()
     serializer_class = ElectronicSignatureSerializer
     permission_classes = [HasTenantRole]
+
+
+class IsmsCalendarView(APIView):
+    """A single, cross-model calendar of every ISMS date that matters:
+    scheduled/planned audits, corrective-action due dates, risk treatment
+    target dates, and security-awareness training due dates. Split into
+    overdue (past due, not yet closed/completed) and upcoming (due today
+    or later), each sorted soonest-first — so "what's late" and "what's
+    coming" are each a single glance rather than five separate tabs.
+
+    Read-only, any tenant member — this is a visibility tool, not a
+    write-gated action; the underlying records are still edited through
+    their own viewsets."""
+
+    permission_classes = [HasTenantRole]
+
+    def get(self, request):
+        overdue, upcoming = get_isms_calendar_events()
+
+        def _serialize(e):
+            return {**e, 'date': e['date'].isoformat()}
+
+        return Response({
+            'overdue': [_serialize(e) for e in overdue],
+            'upcoming': [_serialize(e) for e in upcoming],
+        })
+
+
+class ApprovalMatrixView(APIView):
+    """Reference table: which tenant roles can write to which record
+    types. Read directly off each viewset's own `allowed_roles` (falling
+    back to "any member" when a viewset sets none), so this can never
+    drift out of sync with what the API actually enforces — it's a
+    reflection of the real permission wiring, not a separately
+    maintained document that could go stale."""
+
+    permission_classes = [HasTenantRole]
+
+    ALL_ROLES = ['admin', 'auditor', 'user']
+
+    # (label, viewset) — introspected for allowed_roles at request time.
+    ENTRIES = [
+        ('Documents', DocumentViewSet),
+        ('Risks', RiskViewSet),
+        ('Suppliers', SupplierViewSet),
+        ('Controls', ControlViewSet),
+        ('Incidents', IncidentViewSet),
+        ('Audits', AuditViewSet),
+        ('Corrective/Preventive Actions', CorrectiveActionViewSet),
+        ('Evidence', EvidenceViewSet),
+        ('Approval Workflows', WorkflowViewSet),
+        ('Security Awareness Training (assign/edit)', TrainingRecordViewSet),
+    ]
+
+    def get(self, request):
+        rows = []
+        for label, viewset in self.ENTRIES:
+            allowed = getattr(viewset, 'allowed_roles', None) or self.ALL_ROLES
+            rows.append({
+                'record_type': label,
+                'can_write': [r for r in self.ALL_ROLES if r in allowed],
+                'can_read': self.ALL_ROLES,
+            })
+        # A few write rules that aren't a plain viewset allowed_roles
+        # lookup — documented here rather than left implicit.
+        rows.append({
+            'record_type': 'Workflow step approval/rejection (electronic signature)',
+            'can_write': ['the specific assigned approver, or the role named on that step'],
+            'can_read': self.ALL_ROLES,
+        })
+        rows.append({
+            'record_type': 'Tenant members & roles',
+            'can_write': ['admin'],
+            'can_read': self.ALL_ROLES,
+        })
+        rows.append({
+            'record_type': 'Org settings / branding',
+            'can_write': ['admin'],
+            'can_read': self.ALL_ROLES,
+        })
+        rows.append({
+            'record_type': 'Audit log (view only, never written directly)',
+            'can_write': [],
+            'can_read': ['admin', 'auditor'],
+        })
+        return Response(rows)

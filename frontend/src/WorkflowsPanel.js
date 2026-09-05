@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { apiFetch, unwrapList } from './api'
 import StatusBadge from './StatusBadge'
+import ExportCsvButton from './ExportCsvButton'
 
 const ROLE_OPTIONS = ['admin', 'auditor', 'user']
 
@@ -95,6 +96,7 @@ export default function WorkflowsPanel({ token }) {
           <button type="button" onClick={addStep}>+ Add Step</button>
         </div>
         <button type="submit" className="btn-primary">Start Approval Workflow</button>
+        <ExportCsvButton token={token} path="/workflows/" filename="workflows.csv" />
       </form>
 
       {workflows.length === 0 ? (

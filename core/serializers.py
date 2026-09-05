@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from .models import (
     Document, DocumentRevision, Risk, Supplier, Control, Incident, Audit, CorrectiveAction,
-    Evidence, Workflow, WorkflowStep, AuditLog, ElectronicSignature,
+    Evidence, Workflow, WorkflowStep, AuditLog, ElectronicSignature, TrainingRecord,
 )
 
 
@@ -24,7 +24,13 @@ class DocumentSerializer(serializers.ModelSerializer):
             'id', 'title', 'content', 'version', 'status',
             'owner', 'owner_username', 'reviewed_at', 'created_at', 'updated_at',
         )
-        read_only_fields = ('version', 'created_at', 'updated_at')
+        # status is read-only here on purpose: it must only ever change via
+        # WorkflowStepViewSet.decide() completing an approval (which sets it
+        # directly on the model, bypassing this serializer entirely) — never
+        # a plain PATCH. Otherwise anyone with document-write access could
+        # set status="approved" themselves, skipping the approval workflow
+        # and the 21 CFR Part 11 electronic signature it requires entirely.
+        read_only_fields = ('version', 'status', 'created_at', 'updated_at')
 
 
 class RiskSerializer(serializers.ModelSerializer):
@@ -106,13 +112,28 @@ class EvidenceSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         data = super().to_representation(instance)
         if instance.file:
-            # A relative URL, not DRF's default absolute-URI-from-request —
-            # in dev, requests can arrive with a proxy-rewritten Host header
-            # (e.g. the frontend's CRA dev server proxy), which would bake
-            # an unreachable host into the link. Relative resolves against
-            # whatever origin the browser actually loaded the page from.
-            data['file'] = instance.file.url
+            # Points at EvidenceViewSet.download, not the storage
+            # backend's own URL for the file: local disk's /media/ is
+            # served with no auth check at all (DEBUG-only static()), and
+            # an S3 object private enough to need real access control
+            # can't be handed out as a plain link either. This relative,
+            # same-origin API path goes through our own auth/RBAC and
+            # works identically for either storage backend.
+            data['file'] = f'/api/evidence/{instance.pk}/download/'
         return data
+
+
+class TrainingRecordSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source='user.username', read_only=True)
+    is_overdue = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = TrainingRecord
+        fields = (
+            'id', 'user', 'username', 'title', 'status', 'assigned_date',
+            'due_date', 'completed_date', 'notes', 'is_overdue', 'created_at', 'updated_at',
+        )
+        read_only_fields = ('assigned_date', 'created_at', 'updated_at')
 
 
 class WorkflowStepSerializer(serializers.ModelSerializer):

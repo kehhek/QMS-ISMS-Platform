@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Client, Domain, Membership
+from .models import Client, Domain, Membership, DemoRequest
 
 
 @admin.register(Client)
@@ -16,3 +16,10 @@ class DomainAdmin(admin.ModelAdmin):
 class MembershipAdmin(admin.ModelAdmin):
     list_display = ('user', 'tenant', 'role', 'created_at')
     list_filter = ('role', 'tenant')
+
+
+@admin.register(DemoRequest)
+class DemoRequestAdmin(admin.ModelAdmin):
+    list_display = ('name', 'email', 'company', 'status', 'created_at')
+    list_filter = ('status',)
+    search_fields = ('name', 'email', 'company', 'message')

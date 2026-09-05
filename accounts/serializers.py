@@ -2,7 +2,6 @@ import re
 
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Group
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 
@@ -64,16 +63,62 @@ class RegisterSerializer(serializers.Serializer):
         return value
 
 
-User = get_user_model()
+# UserSerializer/GroupSerializer used to live here, backing UserViewSet/
+# GroupViewSet — removed along with those views (see accounts/views.py)
+# as a cross-tenant data leak: a full read/write serializer over every
+# platform user and Django Group, reachable by any tenant's own admin.
 
 
-class UserSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = User
-        fields = ('id', 'username', 'email', 'is_staff', 'is_active')
+class NewPasswordMixin:
+    def validate_new_password(self, value):
+        # Same Part 11 §11.300(a) enforcement as registration
+        # (settings.AUTH_PASSWORD_VALIDATORS) — a forced password change
+        # shouldn't be allowed to land on a weaker password than signup did.
+        try:
+            validate_password(value, user=getattr(self, '_password_validation_user', None))
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(list(exc.messages))
+        return value
 
 
-class GroupSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Group
-        fields = ('id', 'name')
+class ChangePasswordSerializer(NewPasswordMixin, serializers.Serializer):
+    """For an already-authenticated user proactively changing their own
+    password (as opposed to ExpiredPasswordChangeSerializer, used when
+    they're blocked from logging in at all)."""
+
+    old_password = serializers.CharField(write_only=True, style={'input_type': 'password'})
+    new_password = serializers.CharField(write_only=True, style={'input_type': 'password'})
+
+
+class ExpiredPasswordChangeSerializer(NewPasswordMixin, serializers.Serializer):
+    """Lets a user whose password has expired (Part 11 §11.300(b)) set a
+    new one WITHOUT already holding a token — they can't get one until
+    they do this, since LoggingObtainAuthToken refuses to issue a token
+    for an expired password. Re-verifies identity via username+old
+    password, same as a normal login, rather than trusting the username
+    alone."""
+
+    username = serializers.CharField()
+    old_password = serializers.CharField(write_only=True, style={'input_type': 'password'})
+    new_password = serializers.CharField(write_only=True, style={'input_type': 'password'})
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    """"Forgot password" — just a username; the view decides whether that
+    account exists and has an email without ever telling the caller
+    which (see PasswordResetRequestView), so this can't be used to
+    enumerate usernames."""
+
+    username = serializers.CharField()
+
+
+class PasswordResetConfirmSerializer(NewPasswordMixin, serializers.Serializer):
+    """Completes a reset from the emailed link's uid+token — Django's own
+    PasswordResetTokenGenerator (used by the view), not a hand-rolled
+    scheme: it's salted, single-use (invalidated by the very password
+    change it authorizes, since the hash incorporates the old password),
+    and time-limited via settings.PASSWORD_RESET_TIMEOUT."""
+
+    uid = serializers.CharField()
+    token = serializers.CharField()
+    new_password = serializers.CharField(write_only=True, style={'input_type': 'password'})

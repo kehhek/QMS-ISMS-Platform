@@ -1,18 +1,23 @@
-from django.urls import path, include
+from django.urls import path
 from .views import (
-    onboard_tenant, RegisterView, LoggingObtainAuthToken, LoginView, LogoutView, UserViewSet, GroupViewSet,
+    onboard_tenant, RegisterView, LoggingObtainAuthToken, LoginView, LogoutView,
+    ChangePasswordView, ExpiredPasswordChangeView, PasswordResetRequestView, PasswordResetConfirmView,
 )
-from rest_framework.routers import DefaultRouter
+from tenants.views import DemoRequestView
 
-router = DefaultRouter()
-router.register(r'users', UserViewSet, basename='user')
-router.register(r'groups', GroupViewSet, basename='group')
+# No router/UserViewSet/GroupViewSet here anymore — see accounts/views.py
+# for why (a cross-tenant user/group management leak, removed rather than
+# re-scoped).
 
 urlpatterns = [
     path('onboard/', onboard_tenant, name='tenant-onboard'),
     path('register/', RegisterView.as_view(), name='api-register'),
+    path('demo-request/', DemoRequestView.as_view(), name='api-demo-request'),
     path('token/', LoggingObtainAuthToken.as_view(), name='api-token'),
     path('login/', LoginView.as_view(), name='api-login'),
     path('logout/', LogoutView.as_view(), name='api-logout'),
-    path('', include(router.urls)),
+    path('password/change/', ChangePasswordView.as_view(), name='api-password-change'),
+    path('password/change-expired/', ExpiredPasswordChangeView.as_view(), name='api-password-change-expired'),
+    path('password/reset/', PasswordResetRequestView.as_view(), name='api-password-reset-request'),
+    path('password/reset-confirm/', PasswordResetConfirmView.as_view(), name='api-password-reset-confirm'),
 ]

@@ -1,5 +1,6 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { formatApiError } from './api'
 
 const FEATURES = [
   {
@@ -48,6 +49,69 @@ const PLANS = [
   },
 ]
 
+function DemoRequestForm() {
+  const [form, setForm] = useState({ name: '', email: '', company: '', message: '' })
+  const [status, setStatus] = useState('idle') // idle | submitting | done
+  const [error, setError] = useState(null)
+
+  const submit = (e) => {
+    e.preventDefault()
+    setStatus('submitting')
+    setError(null)
+    fetch('/api/accounts/demo-request/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(form),
+    })
+      .then(async (r) => {
+        const data = await r.json().catch(() => null)
+        if (!r.ok) throw new Error(formatApiError(data, 'Could not submit your request'))
+        return data
+      })
+      .then(() => setStatus('done'))
+      .catch((err) => {
+        setError(err.message)
+        setStatus('idle')
+      })
+  }
+
+  if (status === 'done') {
+    return <p className="success-text">Thanks — we'll be in touch shortly to schedule your demo.</p>
+  }
+
+  return (
+    <form className="demo-request-form" onSubmit={submit}>
+      {error && <p className="error-text">{error}</p>}
+      <input
+        placeholder="Your name"
+        value={form.name}
+        onChange={(e) => setForm({ ...form, name: e.target.value })}
+        required
+      />
+      <input
+        type="email"
+        placeholder="Work email"
+        value={form.email}
+        onChange={(e) => setForm({ ...form, email: e.target.value })}
+        required
+      />
+      <input
+        placeholder="Company (optional)"
+        value={form.company}
+        onChange={(e) => setForm({ ...form, company: e.target.value })}
+      />
+      <textarea
+        placeholder="What are you hoping to solve? (optional)"
+        value={form.message}
+        onChange={(e) => setForm({ ...form, message: e.target.value })}
+      />
+      <button type="submit" className="btn-primary" disabled={status === 'submitting'}>
+        {status === 'submitting' ? 'Sending…' : 'Request a demo'}
+      </button>
+    </form>
+  )
+}
+
 export default function HomePage() {
   return (
     <div className="marketing">
@@ -55,6 +119,7 @@ export default function HomePage() {
         <div className="marketing-logo">QMS/ISMS Console</div>
         <nav className="marketing-nav">
           <Link to="/app" className="marketing-nav-link">Log in</Link>
+          <Link to="/register" className="marketing-nav-link">Create account</Link>
           <Link to="/register" className="btn-primary">Get started</Link>
         </nav>
       </header>
@@ -93,6 +158,19 @@ export default function HomePage() {
               <Link to={`/register?plan=${p.key}`} className="btn-primary pricing-cta">Get started</Link>
             </div>
           ))}
+        </div>
+      </section>
+
+      <section className="demo-request">
+        <div className="demo-request-inner">
+          <div className="demo-request-pitch">
+            <h2>Want a guided walkthrough instead?</h2>
+            <p>
+              Tell us a bit about your team and we'll set up a live demo tailored to your ISMS/QMS
+              needs — no need to configure anything yourself first.
+            </p>
+          </div>
+          <DemoRequestForm />
         </div>
       </section>
 

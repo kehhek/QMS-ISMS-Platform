@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { apiFetch, apiFetchUrl, unwrapList } from './api'
 import StatusBadge from './StatusBadge'
+import ExportCsvButton from './ExportCsvButton'
 
 export default function AuditLogPanel({ token }) {
   const [page, setPage] = useState(null)
@@ -27,6 +28,9 @@ export default function AuditLogPanel({ token }) {
       <p className="panel-hint">
         Visible to admin/auditor roles only. Entries are append-only — nothing here can be edited or deleted.
       </p>
+      <div className="toolbar">
+        <ExportCsvButton token={token} path="/audit-log/" filename="audit-log.csv" />
+      </div>
       {entries.length === 0 ? (
         <p className="empty-state">No activity logged yet.</p>
       ) : (

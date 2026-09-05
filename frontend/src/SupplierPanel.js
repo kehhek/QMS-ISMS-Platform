@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { apiFetch, unwrapList } from './api'
 import StatusBadge from './StatusBadge'
+import ExportCsvButton from './ExportCsvButton'
 
 const STATUS_OPTIONS = ['active', 'under_review', 'inactive']
 
@@ -96,6 +97,7 @@ export default function SupplierPanel({ token }) {
           {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
         </select>
         <button type="submit" className="btn-primary">Add Supplier</button>
+        <ExportCsvButton token={token} path="/suppliers/" filename="suppliers.csv" />
       </form>
 
       {suppliers.length === 0 ? (

@@ -734,6 +734,56 @@ a.btn-primary {
   width: 100%;
 }
 
+.demo-request {
+  margin-bottom: 56px;
+}
+
+.demo-request-inner {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  padding: 36px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 32px;
+  align-items: center;
+}
+
+.demo-request-pitch h2 {
+  margin: 0 0 10px;
+  font-size: 22px;
+}
+
+.demo-request-pitch p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.demo-request-form input,
+.demo-request-form textarea {
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.demo-request-form textarea {
+  resize: vertical;
+  min-height: 72px;
+  font-family: inherit;
+}
+
+.demo-request-form button {
+  width: 100%;
+}
+
+@media (max-width: 700px) {
+  .demo-request-inner {
+    grid-template-columns: 1fr;
+  }
+}
+
 .marketing-footer {
   text-align: center;
   font-size: 12px;

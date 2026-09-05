@@ -3,7 +3,7 @@ from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
 
-from .storage import EncryptedFileSystemStorage
+from .storage import get_evidence_storage
 
 
 class Document(models.Model):
@@ -275,13 +275,55 @@ class CorrectiveAction(models.Model):
         return self.title
 
 
+class TrainingRecord(models.Model):
+    """Security awareness training tracking (ISO 27001 A.6.3 —
+    "information security awareness, education and training"). One row
+    per person per training assignment/cycle (e.g. "Annual security
+    awareness training 2026"). Feeds the ISMS calendar's overdue/upcoming
+    view via due_date."""
+
+    class Status(models.TextChoices):
+        ASSIGNED = 'assigned', 'Assigned'
+        IN_PROGRESS = 'in_progress', 'In progress'
+        COMPLETED = 'completed', 'Completed'
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='training_records',
+    )
+    title = models.CharField(max_length=255, help_text='e.g. "Annual security awareness training 2026"')
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.ASSIGNED)
+    assigned_date = models.DateField(auto_now_add=True)
+    due_date = models.DateField(null=True, blank=True)
+    completed_date = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-due_date']
+
+    def __str__(self):
+        return f'{self.user} — {self.title}'
+
+    @property
+    def is_overdue(self):
+        if self.status == self.Status.COMPLETED or not self.due_date:
+            return False
+        from django.utils import timezone
+        return self.due_date < timezone.localdate()
+
+
 class Evidence(models.Model):
     """A file attached as evidence to any other core object (an Audit,
     Control, Incident, CorrectiveAction, Risk, or Document) — the
     generic FK lets one upload flow serve all of them."""
 
     title = models.CharField(max_length=255)
-    file = models.FileField(upload_to='evidence/%Y/%m/', storage=EncryptedFileSystemStorage())
+    # A callable, not an instance: Django 4.2+ calls this at runtime for
+    # every operation and serializes the reference (not a frozen backend
+    # choice) into migrations — see get_evidence_storage's docstring for
+    # why the choice of local-disk-vs-S3 needs to be dynamic here.
+    file = models.FileField(upload_to='evidence/%Y/%m/', storage=get_evidence_storage)
     description = models.TextField(blank=True)
     uploaded_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
@@ -372,6 +414,7 @@ class AuditLog(models.Model):
         LOGIN = 'login', 'Login'
         LOGIN_FAILED = 'login_failed', 'Failed login'
         SIGNATURE_FAILED = 'signature_failed', 'Failed signature attempt'
+        PASSWORD_CHANGED = 'password_changed', 'Password changed'
 
     actor = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
