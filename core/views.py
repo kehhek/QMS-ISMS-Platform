@@ -1,8 +1,10 @@
+from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from tenants.permissions import HasTenantRole, HasTenantRoleStrict, get_role
 
@@ -207,6 +209,29 @@ class WorkflowStepViewSet(viewsets.ReadOnlyModelViewSet):
                 document.save()
 
         return Response(WorkflowStepSerializer(step).data)
+
+
+class CoreContentTypesView(APIView):
+    """Lets the frontend build an Evidence upload form ("attach to what
+    kind of thing") without hardcoding ContentType primary keys, which
+    aren't guaranteed stable across environments. ContentType itself is a
+    SHARED_APP table (django_content_type lives only in the public
+    schema), so these IDs are the same across every tenant — safe to
+    fetch once and reuse."""
+
+    permission_classes = [HasTenantRole]
+
+    ATTACHABLE_MODELS = [Document, Risk, Control, Incident, Audit, CorrectiveAction]
+
+    def get(self, request):
+        # get_for_model creates the row if it doesn't exist yet, rather
+        # than silently omitting a model whose ContentType hasn't been
+        # touched before in this environment.
+        data = [
+            {'id': ContentType.objects.get_for_model(model).id, 'model': model._meta.model_name}
+            for model in self.ATTACHABLE_MODELS
+        ]
+        return Response(data)
 
 
 class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):

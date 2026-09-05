@@ -93,6 +93,17 @@ class EvidenceSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ('uploaded_by', 'uploaded_at')
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if instance.file:
+            # A relative URL, not DRF's default absolute-URI-from-request —
+            # in dev, requests can arrive with a proxy-rewritten Host header
+            # (e.g. the frontend's CRA dev server proxy), which would bake
+            # an unreachable host into the link. Relative resolves against
+            # whatever origin the browser actually loaded the page from.
+            data['file'] = instance.file.url
+        return data
+
 
 class WorkflowStepSerializer(serializers.ModelSerializer):
     approver_username = serializers.CharField(source='approver.username', read_only=True, default=None)

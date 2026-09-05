@@ -4,14 +4,24 @@ import TenantSettingsPanel from './TenantSettingsPanel'
 import MembersPanel from './MembersPanel'
 import DocumentsPanel from './DocumentsPanel'
 import RisksPanel from './RisksPanel'
+import ControlsPanel from './ControlsPanel'
+import IncidentsPanel from './IncidentsPanel'
 import AuditsPanel from './AuditsPanel'
 import CorrectiveActionsPanel from './CorrectiveActionsPanel'
+import EvidencePanel from './EvidencePanel'
+import WorkflowsPanel from './WorkflowsPanel'
+import AuditLogPanel from './AuditLogPanel'
 
 const TABS = [
   { key: 'documents', label: 'Documents', Component: DocumentsPanel },
+  { key: 'workflows', label: 'Approvals', Component: WorkflowsPanel },
   { key: 'risks', label: 'Risks', Component: RisksPanel },
+  { key: 'controls', label: 'Controls', Component: ControlsPanel },
+  { key: 'incidents', label: 'Incidents', Component: IncidentsPanel },
   { key: 'audits', label: 'Audits', Component: AuditsPanel },
   { key: 'capa', label: 'Corrective Actions', Component: CorrectiveActionsPanel },
+  { key: 'evidence', label: 'Evidence', Component: EvidencePanel },
+  { key: 'audit-log', label: 'Audit Log', Component: AuditLogPanel },
   { key: 'members', label: 'Members', Component: MembersPanel },
   { key: 'org-settings', label: 'Org Settings', Component: TenantSettingsPanel },
   { key: 'roles', label: 'Global Users (superuser)', Component: RoleManager },
