@@ -349,3 +349,163 @@ tbody tr:last-child td {
   font-size: 13px;
   color: var(--color-text-muted);
 }
+
+/* Dashboard: stat tiles */
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.stat-tile {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
+.stat-tile-value {
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.15;
+  /* Proportional figures for a large standalone number — tabular-nums is
+     reserved for columns of numbers that must align vertically. */
+  font-variant-numeric: proportional-nums;
+}
+
+.stat-tile-label {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+/* Dashboard: chart cards */
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.dashboard-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.dashboard-card h4 {
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.stacked-bar-wrap {
+  width: 100%;
+}
+
+/* Stacked bar mark: <=24px thick, 2px surface gap between segments (flexbox
+   gap, not a stroke), 4px rounded caps on the outer ends only. */
+.stacked-bar {
+  display: flex;
+  gap: 2px;
+  width: 100%;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--color-bg);
+}
+
+.stacked-bar-segment {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2px;
+  outline-offset: 2px;
+  transition: filter 0.1s ease;
+  cursor: default;
+}
+
+.stacked-bar-segment:hover,
+.stacked-bar-segment:focus-visible {
+  filter: brightness(0.92);
+}
+
+.stacked-bar-inline-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  /* Values, not the mark, carry meaning via text — but a label set
+     *inside* a colored fill is the documented exception: white here
+     reads clearly against every step in both palettes used on this
+     dashboard. */
+}
+
+.stacked-bar-tooltip-row {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  min-height: 16px;
+}
+
+.stacked-bar-tooltip-row strong {
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.stacked-bar-empty {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  padding: 8px 0;
+}
+
+/* Legend: identity channel, never color-alone */
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  text-transform: capitalize;
+}
+
+.chart-legend-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+/* Recent activity feed */
+.activity-feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+}
+
+.activity-feed li {
+  padding: 7px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.activity-feed li:last-child {
+  border-bottom: none;
+}
+
+.activity-time {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.activity-target {
+  color: var(--color-text-muted);
+}

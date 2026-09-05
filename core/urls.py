@@ -5,7 +5,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     DocumentViewSet, DocumentRevisionViewSet, RiskViewSet, ControlViewSet, IncidentViewSet,
     AuditViewSet, CorrectiveActionViewSet, EvidenceViewSet, WorkflowViewSet, WorkflowStepViewSet,
-    AuditLogViewSet, CoreContentTypesView,
+    AuditLogViewSet, CoreContentTypesView, DashboardSummaryView,
 )
 
 
@@ -29,5 +29,6 @@ router.register(r'audit-log', AuditLogViewSet, basename='audit-log')
 urlpatterns = [
     path('ping/', ping),
     path('content-types/', CoreContentTypesView.as_view(), name='core-content-types'),
+    path('dashboard-summary/', DashboardSummaryView.as_view(), name='dashboard-summary'),
     path('', include(router.urls)),
 ]

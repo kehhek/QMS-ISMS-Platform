@@ -1,4 +1,5 @@
 from django.contrib.contenttypes.models import ContentType
+from django.db.models import Count
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -232,6 +233,42 @@ class CoreContentTypesView(APIView):
             for model in self.ATTACHABLE_MODELS
         ]
         return Response(data)
+
+
+class DashboardSummaryView(APIView):
+    """Pre-aggregated counts for the dashboard, computed in the DB rather
+    than shipping every row (e.g. all 126 Controls) to the browser to
+    count client-side. Any tenant member can view — this is read-only,
+    org-wide visibility, not a write-gated action."""
+
+    permission_classes = [HasTenantRole]
+
+    @staticmethod
+    def _counts_by(queryset, field):
+        return {row[field]: row['count'] for row in queryset.values(field).annotate(count=Count('id'))}
+
+    def get(self, request):
+        controls_by_framework = {}
+        for row in Control.objects.values('framework', 'status').annotate(count=Count('id')):
+            controls_by_framework.setdefault(row['framework'], {})[row['status']] = row['count']
+
+        return Response({
+            'documents': self._counts_by(Document.objects.all(), 'status'),
+            'risks': self._counts_by(Risk.objects.all(), 'status'),
+            'audits': self._counts_by(Audit.objects.all(), 'status'),
+            'corrective_actions': self._counts_by(CorrectiveAction.objects.all(), 'status'),
+            'incidents': self._counts_by(Incident.objects.all(), 'severity'),
+            'controls': controls_by_framework,
+            'pending_approvals': WorkflowStep.objects.filter(status=WorkflowStep.Status.PENDING).count(),
+            'totals': {
+                'documents': Document.objects.count(),
+                'risks': Risk.objects.count(),
+                'audits': Audit.objects.count(),
+                'corrective_actions': CorrectiveAction.objects.count(),
+                'incidents': Incident.objects.count(),
+                'controls': Control.objects.count(),
+            },
+        })
 
 
 class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):

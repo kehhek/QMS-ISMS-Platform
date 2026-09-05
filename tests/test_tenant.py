@@ -1,3 +1,4 @@
+from django.db import connection
 from django.test import TestCase
 from tenants.models import Client, Domain
 from django_tenants.utils import schema_context, get_tenant_model
@@ -6,6 +7,11 @@ from django.contrib.auth import get_user_model
 
 class TenantModelTests(TestCase):
     def test_create_tenant_and_superuser(self):
+        # A prior test's APIClient request may have left the connection set
+        # to that tenant's schema (TenantMainMiddleware doesn't reset it
+        # after the response) — creating a tenant requires starting from
+        # the public schema.
+        connection.set_schema_to_public()
         client = Client.objects.create(schema_name='testtenant', name='Test Tenant')
         Domain.objects.create(domain='testtenant.localhost', tenant=client, is_primary=True)
 
@@ -16,6 +22,7 @@ class TenantModelTests(TestCase):
             self.assertEqual(User.objects.count(), 1)
 
     def test_core_models(self):
+        connection.set_schema_to_public()
         # ensure core models are importable in tenant schema
         client = Client.objects.create(schema_name='t2', name='Tenant2')
         Domain.objects.create(domain='t2.localhost', tenant=client, is_primary=True)

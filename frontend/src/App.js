@@ -4,6 +4,7 @@ import LoginForm from './LoginForm'
 import RoleManager from './RoleManager'
 import TenantSettingsPanel from './TenantSettingsPanel'
 import MembersPanel from './MembersPanel'
+import DashboardPanel from './DashboardPanel'
 import DocumentsPanel from './DocumentsPanel'
 import RisksPanel from './RisksPanel'
 import ControlsPanel from './ControlsPanel'
@@ -17,6 +18,7 @@ import AuditLogPanel from './AuditLogPanel'
 const TOKEN_STORAGE_KEY = 'mtp_token'
 
 const TABS = [
+  { key: 'dashboard', label: 'Dashboard', Component: DashboardPanel },
   { key: 'documents', label: 'Documents', Component: DocumentsPanel },
   { key: 'workflows', label: 'Approvals', Component: WorkflowsPanel },
   { key: 'risks', label: 'Risks', Component: RisksPanel },
@@ -42,7 +44,7 @@ function readStoredToken() {
 
 export default function App() {
   const [token, setToken] = useState(readStoredToken)
-  const [activeKey, setActiveKey] = useState('documents')
+  const [activeKey, setActiveKey] = useState('dashboard')
 
   const handleLogin = (newToken) => {
     setToken(newToken)
