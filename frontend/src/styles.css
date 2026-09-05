@@ -552,24 +552,36 @@ a.btn-primary {
   text-align: center;
 }
 
+/* Full-bleed hero: breaks out of .marketing's max-width to span the
+   viewport, while .hero's own content stays centered and readable. */
 .hero {
+  width: 100vw;
+  position: relative;
+  left: 50%;
+  right: 50%;
+  margin-left: -50vw;
+  margin-right: -50vw;
   text-align: center;
-  padding: 64px 0 56px;
+  padding: 72px 20px 64px;
+  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 55%, #a855f7 100%);
+  color: #ffffff;
+  margin-bottom: 56px;
 }
 
 .hero h1 {
-  font-size: 36px;
+  font-size: 38px;
   font-weight: 700;
   letter-spacing: -0.02em;
   margin: 0 0 16px;
   max-width: 640px;
   margin-left: auto;
   margin-right: auto;
+  color: #ffffff;
 }
 
 .hero-subtitle {
   font-size: 16px;
-  color: var(--color-text-muted);
+  color: rgba(255, 255, 255, 0.88);
   max-width: 520px;
   margin: 0 auto 28px;
   line-height: 1.5;
@@ -577,7 +589,17 @@ a.btn-primary {
 
 .hero-cta {
   font-size: 15px;
-  padding: 11px 24px;
+  padding: 12px 26px;
+  background: #ffffff;
+  color: var(--color-primary);
+  border-color: #ffffff;
+  font-weight: 600;
+}
+
+.hero-cta:hover {
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--color-primary-hover);
+  border-color: #ffffff;
 }
 
 .feature-grid {
@@ -593,6 +615,22 @@ a.btn-primary {
   border-radius: var(--radius);
   padding: 20px;
 }
+
+.feature-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  font-size: 18px;
+  margin-bottom: 12px;
+}
+
+.feature-icon-blue { background: #dbeafe; }
+.feature-icon-amber { background: var(--color-warning-bg); }
+.feature-icon-teal { background: #ccfbf1; }
+.feature-icon-violet { background: #ede9fe; }
 
 .feature-card h3 {
   margin: 0 0 8px;
@@ -624,6 +662,7 @@ a.btn-primary {
 }
 
 .pricing-card {
+  position: relative;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
@@ -633,8 +672,28 @@ a.btn-primary {
 }
 
 .pricing-card.highlighted {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 1px var(--color-primary), var(--shadow-md);
+  border-color: transparent;
+  background:
+    linear-gradient(var(--color-surface), var(--color-surface)) padding-box,
+    linear-gradient(135deg, #4f46e5, #a855f7) border-box;
+  border: 2px solid transparent;
+  box-shadow: var(--shadow-md);
+  padding-top: 40px;
+}
+
+.pricing-ribbon {
+  position: absolute;
+  top: 0;
+  left: 24px;
+  transform: translateY(-50%);
+  background: linear-gradient(135deg, #4f46e5, #a855f7);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 5px 12px;
+  border-radius: 999px;
 }
 
 .pricing-card h3 {

@@ -2,10 +2,22 @@ import React from 'react'
 import { Link } from 'react-router-dom'
 
 const FEATURES = [
-  { title: 'Document control', body: 'Versioned documents with multi-step, role-based approval workflows.' },
-  { title: 'Risk & incident management', body: 'Track risks, incidents, suppliers, and the corrective actions that close them out.' },
-  { title: 'ISO 27001 & SOC 2 ready', body: 'All 93 ISO 27001 controls and the SOC 2 Common Criteria, pre-loaded for every org.' },
-  { title: 'Immutable audit trail', body: 'Every action is logged, append-only, enforced at the database level — not just in the UI.' },
+  {
+    title: 'Document control', icon: '📄', tone: 'blue',
+    body: 'Versioned documents with multi-step, role-based approval workflows.',
+  },
+  {
+    title: 'Risk & incident management', icon: '⚠️', tone: 'amber',
+    body: 'Track risks, incidents, suppliers, and the corrective actions that close them out.',
+  },
+  {
+    title: 'ISO 27001 & SOC 2 ready', icon: '✅', tone: 'teal',
+    body: 'All 93 ISO 27001 controls and the SOC 2 Common Criteria, pre-loaded for every org.',
+  },
+  {
+    title: 'Immutable audit trail', icon: '🔒', tone: 'violet',
+    body: 'Every action is logged, append-only, enforced at the database level — not just in the UI.',
+  },
 ]
 
 const PLANS = [
@@ -59,6 +71,7 @@ export default function HomePage() {
       <section className="feature-grid">
         {FEATURES.map((f) => (
           <div key={f.title} className="feature-card">
+            <div className={`feature-icon feature-icon-${f.tone}`}>{f.icon}</div>
             <h3>{f.title}</h3>
             <p>{f.body}</p>
           </div>
@@ -70,6 +83,7 @@ export default function HomePage() {
         <div className="pricing-grid">
           {PLANS.map((p) => (
             <div key={p.key} className={`pricing-card${p.highlighted ? ' highlighted' : ''}`}>
+              {p.highlighted && <div className="pricing-ribbon">Most popular</div>}
               <h3>{p.name}</h3>
               <div className="pricing-price">{p.price}</div>
               <p className="pricing-tagline">{p.tagline}</p>
