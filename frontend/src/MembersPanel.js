@@ -47,6 +47,7 @@ export default function MembersPanel({ token }) {
           placeholder="Username"
           value={form.username}
           onChange={(e) => setForm({ ...form, username: e.target.value })}
+          required
         />
         <input
           placeholder="Email (only used if creating a new user)"

@@ -39,6 +39,7 @@ export default function DocumentsPanel({ token }) {
           placeholder="Title"
           value={form.title}
           onChange={(e) => setForm({ ...form, title: e.target.value })}
+          required
         />
         <input
           placeholder="Content"

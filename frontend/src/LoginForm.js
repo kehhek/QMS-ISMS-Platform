@@ -37,12 +37,14 @@ export default function LoginForm({ onLogin }) {
         value={username}
         onChange={(e) => setUsername(e.target.value)}
         autoFocus
+        required
       />
       <input
         placeholder="Password"
         type="password"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
+        required
       />
       <button type="submit" disabled={submitting}>{submitting ? 'Logging in…' : 'Log in'}</button>
     </form>

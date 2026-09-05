@@ -88,6 +88,7 @@ export default function EvidencePanel({ token }) {
           placeholder="Title"
           value={form.title}
           onChange={(e) => setForm({ ...form, title: e.target.value })}
+          required
         />
         <select
           value={form.content_type}
@@ -103,6 +104,7 @@ export default function EvidencePanel({ token }) {
           value={form.object_id}
           onChange={(e) => setForm({ ...form, object_id: e.target.value })}
           style={{ width: 90 }}
+          required
         />
         <input type="file" onChange={(e) => setFile(e.target.files[0])} />
         <button type="submit" className="btn-primary">Upload</button>

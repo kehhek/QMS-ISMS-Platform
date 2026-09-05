@@ -44,6 +44,7 @@ export default function IncidentsPanel({ token }) {
           placeholder="Title"
           value={form.title}
           onChange={(e) => setForm({ ...form, title: e.target.value })}
+          required
         />
         <select
           value={form.severity}

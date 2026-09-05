@@ -39,6 +39,7 @@ export default function RisksPanel({ token }) {
           placeholder="Name"
           value={form.name}
           onChange={(e) => setForm({ ...form, name: e.target.value })}
+          required
         />
         <input
           type="number"

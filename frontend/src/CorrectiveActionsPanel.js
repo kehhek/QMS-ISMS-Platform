@@ -39,6 +39,7 @@ export default function CorrectiveActionsPanel({ token }) {
           placeholder="Title"
           value={form.title}
           onChange={(e) => setForm({ ...form, title: e.target.value })}
+          required
         />
         <select
           value={form.action_type}

@@ -42,6 +42,7 @@ export default function AuditsPanel({ token }) {
           placeholder="Title"
           value={form.title}
           onChange={(e) => setForm({ ...form, title: e.target.value })}
+          required
         />
         <select
           value={form.audit_type}

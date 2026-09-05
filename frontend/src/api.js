@@ -17,14 +17,32 @@ function authHeaders(token, extra) {
   }
 }
 
+// DRF validation errors come back as {field: ["message", ...], ...} — not
+// a {detail} — so the old fallback of JSON.stringify(data) showed the raw
+// JSON verbatim (e.g. {"title":["This field may not be blank."]}) instead
+// of a readable message. Render field-level errors as "field: message".
+export function formatApiError(data, fallback) {
+  if (!data) return fallback
+  if (typeof data === 'string') return data
+  if (data.detail) return data.detail
+  if (Array.isArray(data)) return data.join(' ')
+  if (typeof data === 'object') {
+    const parts = Object.entries(data).map(([field, messages]) => {
+      const text = Array.isArray(messages) ? messages.join(' ') : messages
+      return field === 'non_field_errors' ? text : `${field}: ${text}`
+    })
+    if (parts.length) return parts.join(' — ')
+  }
+  return fallback
+}
+
 async function handleResponse(r) {
   const data = await r.json().catch(() => null)
   if (!r.ok) {
     if (r.status === 401) {
       window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT))
     }
-    const message = (data && (data.detail || JSON.stringify(data))) || r.statusText
-    throw new Error(message)
+    throw new Error(formatApiError(data, r.statusText))
   }
   return data
 }

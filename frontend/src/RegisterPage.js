@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
+import { formatApiError } from './api'
 import { writeStoredToken } from './tokenStorage'
 
 const PLAN_OPTIONS = [
@@ -34,8 +35,7 @@ export default function RegisterPage() {
       .then(async (r) => {
         const data = await r.json().catch(() => null)
         if (!r.ok) {
-          const message = data ? Object.values(data).flat().join(' ') : 'Registration failed'
-          throw new Error(message)
+          throw new Error(formatApiError(data, 'Registration failed'))
         }
         return data
       })
