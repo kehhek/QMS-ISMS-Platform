@@ -10,14 +10,15 @@ from rest_framework.views import APIView
 from tenants.permissions import HasTenantRole, HasTenantRoleStrict, get_role
 
 from .audit import log_action
+from .signatures import create_signature
 from .models import (
     Document, DocumentRevision, Risk, Supplier, Control, Incident, Audit, CorrectiveAction,
-    Evidence, Workflow, WorkflowStep, AuditLog,
+    Evidence, Workflow, WorkflowStep, AuditLog, ElectronicSignature,
 )
 from .serializers import (
     DocumentSerializer, DocumentRevisionSerializer, RiskSerializer, SupplierSerializer, ControlSerializer,
     IncidentSerializer, AuditSerializer, CorrectiveActionSerializer, EvidenceSerializer,
-    WorkflowSerializer, WorkflowStepSerializer, AuditLogSerializer,
+    WorkflowSerializer, WorkflowStepSerializer, AuditLogSerializer, ElectronicSignatureSerializer,
 )
 
 
@@ -188,6 +189,20 @@ class WorkflowStepViewSet(viewsets.ReadOnlyModelViewSet):
         if not allowed:
             raise PermissionDenied('You are not the approver for this step.')
 
+        # 21 CFR Part 11 §11.200(a)(1): an electronic signature must use at
+        # least two distinct identification components. Being authenticated
+        # (a valid token/session — one component) is deliberately NOT
+        # enough on its own to sign; re-entering the password here is the
+        # second, at the moment of signing, the same way a handwritten
+        # signature is a deliberate act rather than an ambient state.
+        password = request.data.get('password')
+        if not password or not user.check_password(password):
+            log_action(user, AuditLog.Action.SIGNATURE_FAILED, step, metadata={'reason': 'invalid_password'})
+            return Response(
+                {'detail': 'Incorrect password. Electronic signatures require re-entering your password.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         step.status = WorkflowStep.Status.APPROVED if decision == 'approved' else WorkflowStep.Status.REJECTED
         step.comment = request.data.get('comment', '')
         step.decided_by = user
@@ -197,6 +212,15 @@ class WorkflowStepViewSet(viewsets.ReadOnlyModelViewSet):
         log_action(
             user, AuditLog.Action.APPROVE if decision == 'approved' else AuditLog.Action.REJECT, step,
         )
+        # The actual Part 11 electronic signature record — separate from
+        # the audit log entry above. AuditLog says "an approve action
+        # happened"; ElectronicSignature is the signed artifact itself:
+        # who, their printed name at the time, what it meant, and a hash
+        # linking it to this exact step (see ElectronicSignature.verify()).
+        signature_meaning = (
+            ElectronicSignature.Meaning.APPROVED if decision == 'approved' else ElectronicSignature.Meaning.REJECTED
+        )
+        create_signature(user, signature_meaning, step)
 
         workflow = step.workflow
         if step.status == WorkflowStep.Status.REJECTED:
@@ -288,3 +312,15 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = AuditLogSerializer
     permission_classes = [HasTenantRoleStrict]
     allowed_roles = ['admin', 'auditor']
+
+
+class ElectronicSignatureViewSet(viewsets.ReadOnlyModelViewSet):
+    """Read-only — signatures are only ever created by
+    WorkflowStepViewSet.decide() after password re-verification, never via
+    a direct client POST. Any tenant member can view the signature record
+    (this is the evidence a Part 11 audit would ask to see), unlike
+    AuditLogViewSet's admin/auditor-only visibility."""
+
+    queryset = ElectronicSignature.objects.select_related('user', 'content_type').all()
+    serializer_class = ElectronicSignatureSerializer
+    permission_classes = [HasTenantRole]

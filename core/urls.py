@@ -5,7 +5,8 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     DocumentViewSet, DocumentRevisionViewSet, RiskViewSet, SupplierViewSet, ControlViewSet,
     IncidentViewSet, AuditViewSet, CorrectiveActionViewSet, EvidenceViewSet, WorkflowViewSet,
-    WorkflowStepViewSet, AuditLogViewSet, CoreContentTypesView, DashboardSummaryView,
+    WorkflowStepViewSet, AuditLogViewSet, ElectronicSignatureViewSet, CoreContentTypesView,
+    DashboardSummaryView,
 )
 
 
@@ -26,6 +27,7 @@ router.register(r'evidence', EvidenceViewSet, basename='evidence')
 router.register(r'workflows', WorkflowViewSet, basename='workflow')
 router.register(r'workflow-steps', WorkflowStepViewSet, basename='workflow-step')
 router.register(r'audit-log', AuditLogViewSet, basename='audit-log')
+router.register(r'signatures', ElectronicSignatureViewSet, basename='signature')
 
 urlpatterns = [
     path('ping/', ping),

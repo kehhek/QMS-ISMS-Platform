@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from .models import (
     Document, DocumentRevision, Risk, Supplier, Control, Incident, Audit, CorrectiveAction,
-    Evidence, Workflow, WorkflowStep, AuditLog,
+    Evidence, Workflow, WorkflowStep, AuditLog, ElectronicSignature,
 )
 
 
@@ -165,3 +165,20 @@ class AuditLogSerializer(serializers.ModelSerializer):
             'object_id', 'target_repr', 'metadata', 'created_at',
         )
         read_only_fields = fields
+
+
+class ElectronicSignatureSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source='user.username', read_only=True)
+    content_type_name = serializers.CharField(source='content_type.model', read_only=True)
+    valid = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ElectronicSignature
+        fields = (
+            'id', 'user', 'username', 'printed_name', 'meaning', 'content_type', 'content_type_name',
+            'object_id', 'target_repr', 'signed_at', 'valid',
+        )
+        read_only_fields = fields
+
+    def get_valid(self, obj):
+        return obj.verify()

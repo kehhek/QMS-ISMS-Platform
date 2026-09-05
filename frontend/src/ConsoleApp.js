@@ -17,6 +17,7 @@ import CorrectiveActionsPanel from './CorrectiveActionsPanel'
 import EvidencePanel from './EvidencePanel'
 import WorkflowsPanel from './WorkflowsPanel'
 import AuditLogPanel from './AuditLogPanel'
+import SignaturesPanel from './SignaturesPanel'
 
 const TABS = [
   { key: 'dashboard', label: 'Dashboard', Component: DashboardPanel },
@@ -29,6 +30,7 @@ const TABS = [
   { key: 'audits', label: 'Audits', Component: AuditsPanel },
   { key: 'capa', label: 'Corrective Actions', Component: CorrectiveActionsPanel },
   { key: 'evidence', label: 'Evidence', Component: EvidencePanel },
+  { key: 'signatures', label: 'Signatures', Component: SignaturesPanel },
   { key: 'audit-log', label: 'Audit Log', Component: AuditLogPanel },
   { key: 'members', label: 'Members', Component: MembersPanel },
   { key: 'org-settings', label: 'Org Settings', Component: TenantSettingsPanel },

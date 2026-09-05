@@ -108,6 +108,24 @@ DATABASE_ROUTERS = ['django_tenants.routers.TenantSyncRouter']
 
 AUTH_USER_MODEL = 'accounts.User'
 
+# 21 CFR Part 11 §11.300(a)/(b): unique ID/password combinations and
+# periodic password revision. No validators were configured at all before
+# this — Django applied none, so any password (however weak) was accepted.
+AUTH_PASSWORD_VALIDATORS = [
+    {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator', 'OPTIONS': {'min_length': 10}},
+    {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
+]
+
+# Part 11 §11.300(b) (periodic password revision) and §11.300(d) (transaction
+# safeguards against unauthorized use, e.g. account lockout after repeated
+# failed attempts). See accounts/security.py for where these are enforced —
+# settings only, not self-enforcing.
+PART11_PASSWORD_MAX_AGE_DAYS = int(os.environ.get('PART11_PASSWORD_MAX_AGE_DAYS', '90'))
+PART11_MAX_FAILED_LOGINS = int(os.environ.get('PART11_MAX_FAILED_LOGINS', '5'))
+PART11_LOCKOUT_MINUTES = int(os.environ.get('PART11_LOCKOUT_MINUTES', '15'))
+
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'UTC'
 USE_I18N = True

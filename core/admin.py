@@ -1,7 +1,7 @@
 from django.contrib import admin
 from .models import (
     Document, DocumentRevision, Risk, Supplier, Control, Incident, Audit, CorrectiveAction,
-    Evidence, Workflow, WorkflowStep, AuditLog,
+    Evidence, Workflow, WorkflowStep, AuditLog, ElectronicSignature,
 )
 
 
@@ -94,6 +94,26 @@ class AuditLogAdmin(admin.ModelAdmin):
     list_display = ('created_at', 'actor', 'action', 'content_type', 'target_repr')
     list_filter = ('action', 'content_type')
     search_fields = ('target_repr',)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ElectronicSignature)
+class ElectronicSignatureAdmin(admin.ModelAdmin):
+    list_display = ('signed_at', 'printed_name', 'meaning', 'content_type', 'target_repr', 'is_valid')
+    list_filter = ('meaning', 'content_type')
+    search_fields = ('printed_name', 'target_repr')
+
+    def is_valid(self, obj):
+        return obj.verify()
+    is_valid.boolean = True
 
     def has_add_permission(self, request):
         return False

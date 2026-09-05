@@ -371,6 +371,7 @@ class AuditLog(models.Model):
         REJECT = 'reject', 'Reject'
         LOGIN = 'login', 'Login'
         LOGIN_FAILED = 'login_failed', 'Failed login'
+        SIGNATURE_FAILED = 'signature_failed', 'Failed signature attempt'
 
     actor = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
@@ -398,3 +399,73 @@ class AuditLog(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValueError('AuditLog entries are immutable and cannot be deleted.')
+
+
+class ElectronicSignature(models.Model):
+    """A 21 CFR Part 11 electronic signature (§11.50, §11.70, §11.100,
+    §11.200): a deliberate, re-authenticated act binding one specific
+    person, a stated meaning, and a timestamp to one specific record.
+
+    Created only by WorkflowStepViewSet.decide(), and only after
+    verifying the signer's password at the moment of signing — being
+    already logged in (a valid token/session) is deliberately NOT
+    sufficient on its own, per §11.200(a)(1)'s "at least two distinct
+    identification components" requirement.
+
+    Immutable for the same reason as AuditLog (see save()/delete() below
+    and the DB trigger in migration 0012): a signature record that could
+    be edited or deleted after the fact isn't a signature. See also
+    integrity_hash — §11.70 requires signatures be linked to their record
+    so they can't be excised, copied, or transferred to falsify a
+    different one; the hash makes such tampering detectable.
+    """
+
+    class Meaning(models.TextChoices):
+        APPROVED = 'approved', 'Approved'
+        REJECTED = 'rejected', 'Rejected'
+        REVIEWED = 'reviewed', 'Reviewed'
+        AUTHORED = 'authored', 'Authored'
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='+')
+    # A snapshot, not just the FK: §11.50(a)(1) signature manifestations
+    # must show the printed name of the signer as it was AT SIGNING TIME,
+    # not whatever the account's name happens to be if it's changed since.
+    printed_name = models.CharField(max_length=255)
+    meaning = models.CharField(max_length=20, choices=Meaning.choices)
+    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
+    object_id = models.PositiveIntegerField()
+    target = GenericForeignKey('content_type', 'object_id')
+    target_repr = models.CharField(max_length=255, blank=True)
+    integrity_hash = models.CharField(max_length=64, editable=False)
+    signed_at = models.DateTimeField()
+
+    class Meta:
+        ordering = ['-signed_at']
+
+    def __str__(self):
+        return f'{self.printed_name} {self.meaning} {self.target_repr} at {self.signed_at}'
+
+    def compute_hash(self):
+        import hashlib
+        payload = '|'.join(str(p) for p in (
+            self.user_id, self.printed_name, self.meaning,
+            self.content_type_id, self.object_id, self.signed_at.isoformat(), settings.SECRET_KEY,
+        ))
+        return hashlib.sha256(payload.encode()).hexdigest()
+
+    def verify(self):
+        """True if this row hasn't been tampered with since signing."""
+        return self.integrity_hash == self.compute_hash()
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValueError('ElectronicSignature entries are immutable and cannot be edited.')
+        if not self.signed_at:
+            from django.utils import timezone
+            self.signed_at = timezone.now()
+        if not self.integrity_hash:
+            self.integrity_hash = self.compute_hash()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError('ElectronicSignature entries are immutable and cannot be deleted.')

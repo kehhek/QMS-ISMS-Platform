@@ -80,12 +80,18 @@ class WorkflowApprovalTests(TestCase):
         step_2_id = workflow['steps'][1]['id']
 
         api_auditor = self._api_as(self.auditor)
-        resp = api_auditor.post(f'/api/workflow-steps/{step_1_id}/decide/', {'decision': 'approved'}, HTTP_HOST=self.host)
-        self.assertEqual(resp.status_code, 200)
+        resp = api_auditor.post(
+            f'/api/workflow-steps/{step_1_id}/decide/',
+            {'decision': 'approved', 'password': 'pass12345'}, HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
 
         api_admin = self._api_as(self.admin)
-        resp = api_admin.post(f'/api/workflow-steps/{step_2_id}/decide/', {'decision': 'approved'}, HTTP_HOST=self.host)
-        self.assertEqual(resp.status_code, 200)
+        resp = api_admin.post(
+            f'/api/workflow-steps/{step_2_id}/decide/',
+            {'decision': 'approved', 'password': 'pass12345'}, HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
 
         from django_tenants.utils import schema_context
         with schema_context(self.tenant.schema_name):
@@ -108,9 +114,9 @@ class WorkflowApprovalTests(TestCase):
         api_auditor = self._api_as(self.auditor)
         resp = api_auditor.post(
             f'/api/workflow-steps/{step_1_id}/decide/',
-            {'decision': 'rejected', 'comment': 'Needs more detail'}, HTTP_HOST=self.host,
+            {'decision': 'rejected', 'comment': 'Needs more detail', 'password': 'pass12345'}, HTTP_HOST=self.host,
         )
-        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.status_code, 200, resp.data)
 
         from django_tenants.utils import schema_context
         with schema_context(self.tenant.schema_name):

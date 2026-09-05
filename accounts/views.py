@@ -16,6 +16,7 @@ from django.contrib.auth.models import Group
 from core.audit import log_action
 from core.models import AuditLog
 from .serializers import TenantOnboardSerializer, RegisterSerializer, UserSerializer, GroupSerializer
+from .security import check_lockout, record_failed_login, record_successful_login
 from rest_framework.authentication import SessionAuthentication, BasicAuthentication
 from rest_framework.views import APIView
 from rest_framework.decorators import authentication_classes
@@ -151,17 +152,31 @@ class LoggingObtainAuthToken(ObtainAuthToken):
     authentication_classes = []
 
     def post(self, request, *args, **kwargs):
+        username = request.data.get('username', '')
+        existing_user = get_user_model().objects.filter(username=username).first()
+
+        # Part 11 §11.300(d): reject before even checking the password once
+        # locked, rather than after — this also avoids leaking whether a
+        # locked account's submitted password would otherwise be correct.
+        if existing_user:
+            lockout_message = check_lockout(existing_user)
+            if lockout_message:
+                log_action(
+                    None, AuditLog.Action.LOGIN_FAILED, existing_user,
+                    metadata={'method': 'token', 'reason': 'locked'},
+                )
+                return Response({'detail': lockout_message}, status=status.HTTP_403_FORBIDDEN)
+
         serializer = self.serializer_class(data=request.data, context={'request': request})
         if serializer.is_valid():
             user = serializer.validated_data['user']
+            record_successful_login(user)
             token, _ = Token.objects.get_or_create(user=user)
             log_action(user, AuditLog.Action.LOGIN, user, metadata={'method': 'token'})
             return Response({'token': token.key})
 
-        username = request.data.get('username', '')
-        User = get_user_model()
-        existing_user = User.objects.filter(username=username).first()
         if existing_user:
+            record_failed_login(existing_user)
             log_action(None, AuditLog.Action.LOGIN_FAILED, existing_user, metadata={'method': 'token'})
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -172,14 +187,26 @@ class LoginView(APIView):
     def post(self, request):
         username = request.data.get('username')
         password = request.data.get('password')
+        existing_user = get_user_model().objects.filter(username=username).first()
+
+        if existing_user:
+            lockout_message = check_lockout(existing_user)
+            if lockout_message:
+                log_action(
+                    None, AuditLog.Action.LOGIN_FAILED, existing_user,
+                    metadata={'method': 'session', 'reason': 'locked'},
+                )
+                return Response({'detail': lockout_message}, status=status.HTTP_403_FORBIDDEN)
+
         user = authenticate(request, username=username, password=password)
         if user is not None and user.is_active:
+            record_successful_login(user)
             login(request, user)
             log_action(user, AuditLog.Action.LOGIN, user, metadata={'method': 'session'})
             return Response({'ok': True, 'username': user.username})
 
-        existing_user = get_user_model().objects.filter(username=username).first()
         if existing_user:
+            record_failed_login(existing_user)
             log_action(None, AuditLog.Action.LOGIN_FAILED, existing_user, metadata={'method': 'session'})
         return Response({'ok': False}, status=status.HTTP_400_BAD_REQUEST)
 

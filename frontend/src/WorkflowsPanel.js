@@ -48,9 +48,17 @@ export default function WorkflowsPanel({ token }) {
   }
 
   const decide = (stepId, decision) => {
+    // 21 CFR Part 11 §11.200: signing requires re-entering your password
+    // at the moment of signing — being logged in isn't enough on its own.
+    // eslint-disable-next-line no-alert
+    const password = window.prompt(
+      `Enter your password to ${decision === 'approved' ? 'approve' : 'reject'} this step ` +
+      '(this is your electronic signature — it will be permanently recorded).',
+    )
+    if (!password) return
     apiFetch(`/workflow-steps/${stepId}/decide/`, token, {
       method: 'POST',
-      body: JSON.stringify({ decision }),
+      body: JSON.stringify({ decision, password }),
     })
       .then(() => {
         setError(null)

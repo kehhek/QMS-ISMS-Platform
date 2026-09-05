@@ -3,6 +3,8 @@ import re
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 
 from tenants.models import Client, Domain
 
@@ -32,8 +34,19 @@ class RegisterSerializer(serializers.Serializer):
     subdomain = serializers.CharField(max_length=50)
     username = serializers.CharField(max_length=150)
     email = serializers.EmailField()
-    password = serializers.CharField(min_length=8, write_only=True, style={'input_type': 'password'})
+    password = serializers.CharField(write_only=True, style={'input_type': 'password'})
     plan = serializers.ChoiceField(choices=Client.Plan.choices, default=Client.Plan.FREE)
+
+    def validate_password(self, value):
+        # Enforces settings.AUTH_PASSWORD_VALIDATORS (min length, common-
+        # password check, etc.) — Part 11 §11.300(a). There's no user
+        # instance yet at registration time; UserAttributeSimilarityValidator
+        # tolerates user=None and just skips that one check.
+        try:
+            validate_password(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(list(exc.messages))
+        return value
 
     def validate_subdomain(self, value):
         slug = re.sub(r'[^a-z0-9]+', '-', value.lower()).strip('-')
