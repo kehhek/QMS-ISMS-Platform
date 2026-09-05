@@ -34,59 +34,119 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* App shell: fixed sidebar + scrolling main content. Replaces the old
+   single-row, 20-item flat tab strip — grouped into sections instead,
+   the standard admin-console pattern once a product has more than a
+   handful of areas (Overview / Documents / Risk / Compliance /
+   Administration), so "where do I find X" has an obvious answer. */
 .app-shell {
-  max-width: 1080px;
-  margin: 0 auto;
-  padding: 24px 20px 60px;
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  min-height: 100vh;
+  align-items: start;
 }
 
-.app-header {
+.app-sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  padding: 20px 14px;
+}
+
+.app-sidebar-brand {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  padding: 0 10px 20px;
+}
+
+.sidebar-group {
+  margin-bottom: 18px;
+}
+
+.sidebar-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+  padding: 0 10px 6px;
+}
+
+.sidebar-link {
+  display: block;
+  width: 100%;
+  text-align: left;
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-bottom: 2px;
+}
+
+.sidebar-link:hover {
+  background: var(--color-primary-soft);
+}
+
+.sidebar-link.active {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.app-main {
+  padding: 24px 28px 60px;
+  min-width: 0;
+  max-width: 1400px;
+}
+
+.app-topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 20px;
 }
 
-.app-header h1 {
+.app-topbar h1 {
   font-size: 20px;
   font-weight: 700;
   margin: 0;
   letter-spacing: -0.01em;
 }
 
-/* Tabs */
-.tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-bottom: 20px;
-  border-bottom: 1px solid var(--color-border);
-  padding-bottom: 0;
-}
+@media (max-width: 860px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
 
-.tab {
-  appearance: none;
-  border: none;
-  background: transparent;
-  color: var(--color-text-muted);
-  font-size: 13px;
-  font-weight: 500;
-  padding: 9px 14px;
-  border-radius: var(--radius) var(--radius) 0 0;
-  cursor: pointer;
-  position: relative;
-  top: 1px;
-}
+  .app-sidebar {
+    position: static;
+    height: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--color-border);
+  }
 
-.tab:hover {
-  color: var(--color-text);
-  background: var(--color-primary-soft);
-}
+  .app-sidebar nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+  }
 
-.tab.active {
-  color: var(--color-primary);
-  font-weight: 600;
-  border-bottom: 2px solid var(--color-primary);
+  .sidebar-group {
+    margin-bottom: 10px;
+  }
+
+  .sidebar-group-label {
+    width: 100%;
+  }
 }
 
 /* Panel / card surfaces */
@@ -190,14 +250,6 @@ button.btn-primary:hover:not(:disabled),
 form button[type='submit']:hover:not(:disabled) {
   background: var(--color-primary-hover);
   border-color: var(--color-primary-hover);
-}
-
-.tab {
-  border: none;
-  background: transparent;
-}
-.tab:hover:not(.active) {
-  border-color: transparent;
 }
 
 /* Tables */
@@ -378,6 +430,26 @@ tbody tr:last-child td {
   font-size: 12px;
   color: var(--color-text-muted);
   margin-top: 2px;
+}
+
+/* A stat tile that also acts as a status filter (e.g. Documents' status
+   summary) — click to filter the list to just that value, click again
+   (via the "selected" state) to clear it. */
+.stat-tile-clickable {
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  font-family: inherit;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.stat-tile-clickable:hover {
+  border-color: var(--color-primary);
+}
+
+.stat-tile-clickable.selected {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
 }
 
 /* Dashboard: chart cards */

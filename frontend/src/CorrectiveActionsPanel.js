@@ -1,23 +1,49 @@
 import React from 'react'
+import { apiFetch } from './api'
 import useCrudPanel from './useCrudPanel'
 import StatusBadge from './StatusBadge'
 import ExportCsvButton from './ExportCsvButton'
 
 const TYPE_OPTIONS = ['corrective', 'preventive']
-const STATUS_OPTIONS = ['open', 'in_progress', 'verified', 'closed']
+// 'closed' is deliberately excluded here — closing requires the signed
+// close() action below, not a plain status edit (see
+// CorrectiveActionViewSet.perform_update on the backend, which rejects
+// a direct PATCH to closed).
+const EDITABLE_STATUS_OPTIONS = ['open', 'investigation', 'action_planned', 'action_implemented', 'verification']
 const EMPTY_FORM = { title: '', description: '', action_type: 'corrective' }
 
 export default function CorrectiveActionsPanel({ token }) {
   const {
-    items: actions, error, form, setForm, create,
+    items: actions, error, setError, form, setForm, create, load,
     editingId, editForm, setEditForm, startEdit, cancelEdit, saveEdit, remove,
   } = useCrudPanel('/corrective-actions/', token, EMPTY_FORM)
+
+  const closeCapa = (capa) => {
+    // eslint-disable-next-line no-alert
+    const password = window.prompt(
+      'Enter your password to close this CAPA (this is your electronic signature verifying the fix was effective).',
+    )
+    if (!password) return
+    // eslint-disable-next-line no-alert
+    const effectiveness_notes = window.prompt('Effectiveness verification notes (what evidence shows the fix worked?):') || ''
+    apiFetch(`/corrective-actions/${capa.id}/close/`, token, {
+      method: 'POST',
+      body: JSON.stringify({ password, effectiveness_notes }),
+    })
+      .then(() => { setError(null); load() })
+      .catch((err) => setError(err.message))
+  }
 
   if (!token) return <p className="empty-state">Set a token above to view corrective actions.</p>
 
   return (
     <div>
       {error && <p className="error-text">{error}</p>}
+      <p className="panel-hint">
+        Open → Investigation → Action Planned → Action Implemented → Verification → Closed.
+        Closing requires re-entering your password and an effectiveness verification note — the
+        same electronic-signature pattern as document approval.
+      </p>
       <form onSubmit={(e) => { e.preventDefault(); create() }} className="toolbar">
         <input
           placeholder="Title"
@@ -40,9 +66,8 @@ export default function CorrectiveActionsPanel({ token }) {
               <th>Title</th>
               <th>Type</th>
               <th>Status</th>
+              <th>Root Cause</th>
               <th>Owner</th>
-              <th>Audit</th>
-              <th>Risk</th>
               <th>Due</th>
               <th>Actions</th>
             </tr>
@@ -61,14 +86,19 @@ export default function CorrectiveActionsPanel({ token }) {
                   </td>
                   <td>
                     <select value={editForm.status} onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}>
-                      {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
+                      {EDITABLE_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
                     </select>
+                  </td>
+                  <td>
+                    <input
+                      value={editForm.root_cause}
+                      onChange={(e) => setEditForm({ ...editForm, root_cause: e.target.value })}
+                      style={{ width: 160 }}
+                    />
                   </td>
                   <td>
                     <input value={editForm.owner} onChange={(e) => setEditForm({ ...editForm, owner: e.target.value })} style={{ width: 100 }} />
                   </td>
-                  <td>{a.audit ?? '—'}</td>
-                  <td>{a.risk ?? '—'}</td>
                   <td>
                     <input
                       type="date" value={editForm.due_date || ''}
@@ -84,13 +114,22 @@ export default function CorrectiveActionsPanel({ token }) {
                 <tr key={a.id}>
                   <td>{a.title}</td>
                   <td>{a.action_type}</td>
-                  <td><StatusBadge value={a.status} /></td>
+                  <td>
+                    <StatusBadge value={a.status} />
+                    {a.status === 'closed' && a.effectiveness_notes && (
+                      <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{a.effectiveness_notes}</div>
+                    )}
+                  </td>
+                  <td>{a.root_cause || '—'}</td>
                   <td>{a.owner || '—'}</td>
-                  <td>{a.audit ?? '—'}</td>
-                  <td>{a.risk ?? '—'}</td>
                   <td>{a.due_date || '—'}</td>
                   <td>
-                    <button onClick={() => startEdit(a)} style={{ marginRight: 4 }}>Edit</button>
+                    {a.status !== 'closed' && (
+                      <>
+                        <button onClick={() => startEdit(a)} style={{ marginRight: 4 }}>Edit</button>
+                        <button onClick={() => closeCapa(a)} style={{ marginRight: 4 }}>Close</button>
+                      </>
+                    )}
                     <button onClick={() => remove(a, `"${a.title}"`)}>Delete</button>
                   </td>
                 </tr>

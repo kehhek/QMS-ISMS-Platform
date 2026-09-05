@@ -48,7 +48,11 @@ class CsvExportTests(TestCase):
 
         body = resp.content.decode()
         lines = body.strip().splitlines()
-        self.assertEqual(lines[0], 'id,name,description,likelihood,impact,status,owner,treatment_plan,target_date,residual_likelihood,residual_impact,created_at')
+        self.assertEqual(
+            lines[0],
+            'id,name,description,likelihood,impact,status,owner,asset,asset_name,'
+            'treatment_plan,target_date,residual_likelihood,residual_impact,created_at',
+        )
         self.assertEqual(len(lines), 3)  # header + 2 rows
         self.assertIn('Risk One', body)
         self.assertIn('Alex', body)

@@ -5,7 +5,7 @@ one place so the two can never quietly drift out of sync with each other."""
 
 from django.utils import timezone
 
-from .models import Audit, CorrectiveAction, Risk, TrainingRecord
+from .models import Audit, CorrectiveAction, Risk, TrainingRecord, CalendarEvent
 
 
 def get_isms_calendar_events(today=None):
@@ -44,6 +44,12 @@ def get_isms_calendar_events(today=None):
                 'title': f'{training.title} — {training.user.username}',
                 'date': training.due_date, 'status': training.status,
             })
+
+    for custom in CalendarEvent.objects.all():
+        events.append({
+            'kind': 'custom', 'id': custom.id, 'title': custom.title,
+            'date': custom.date, 'status': '',
+        })
 
     overdue = sorted((e for e in events if e['date'] < today), key=lambda e: e['date'])
     upcoming = sorted((e for e in events if e['date'] >= today), key=lambda e: e['date'])

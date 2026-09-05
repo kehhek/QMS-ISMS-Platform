@@ -60,6 +60,74 @@ class Membership(models.Model):
         return f'{self.user} @ {self.tenant} ({self.role})'
 
 
+class AccessReview(models.Model):
+    """Evidence that a specific Membership's access was actually looked
+    at — ISO 27001 A.5.18 requires access rights be reviewed at regular
+    intervals, not just that a register listing them exists. One row per
+    completed review; MembershipViewSet.review() is the only way to
+    create one, and a SUSPENDED outcome actually deactivates the
+    account (User.is_active=False), immediately blocking further API
+    access (DRF's TokenAuthentication checks is_active on every request)."""
+
+    class Outcome(models.TextChoices):
+        CONFIRMED = 'confirmed', 'Access confirmed'
+        SUSPENDED = 'suspended', 'Account suspended'
+
+    membership = models.ForeignKey(Membership, on_delete=models.CASCADE, related_name='reviews')
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+    )
+    reviewed_at = models.DateTimeField(auto_now_add=True)
+    outcome = models.CharField(max_length=20, choices=Outcome.choices, default=Outcome.CONFIRMED)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['-reviewed_at']
+
+    def __str__(self):
+        return f'Review of {self.membership} — {self.outcome} at {self.reviewed_at}'
+
+
+class UserGroup(models.Model):
+    """A named group for org structure — department/team (e.g. "Quality
+    Team", "Security Team") — scoped to one tenant. NOT a permissions
+    boundary: what someone can do is still entirely decided by their
+    Membership.role, same tier as managing tenant members. A group's
+    payoff is filtering/organizing — e.g. the Members list's `?group=`
+    filter (MembershipViewSet.get_queryset) — not access control."""
+
+    tenant = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='user_groups')
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('tenant', 'name')
+        ordering = ['name']
+
+    def __str__(self):
+        return f'{self.name} ({self.tenant})'
+
+
+class UserGroupMember(models.Model):
+    """One user's membership in one UserGroup — deliberately not named
+    "...Membership" to avoid confusion with `Membership` above (tenant
+    role), a completely different, unrelated concept."""
+
+    group = models.ForeignKey(UserGroup, on_delete=models.CASCADE, related_name='members')
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='user_group_memberships',
+    )
+    added_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('group', 'user')
+        ordering = ['group', 'user']
+
+    def __str__(self):
+        return f'{self.user} in {self.group}'
+
+
 class DemoRequest(models.Model):
     """A lead captured from the public home page's "Request a demo" form.
     Distinct from RegisterView's self-service signup — this doesn't

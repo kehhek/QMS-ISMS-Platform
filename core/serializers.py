@@ -3,7 +3,32 @@ from rest_framework import serializers
 from .models import (
     Document, DocumentRevision, Risk, Supplier, Control, Incident, Audit, CorrectiveAction,
     Evidence, Workflow, WorkflowStep, AuditLog, ElectronicSignature, TrainingRecord,
+    Asset, Nonconformance, ApprovalMatrixRule, ApprovalRecord, CalendarEvent,
 )
+
+
+class CalendarEventSerializer(serializers.ModelSerializer):
+    created_by_username = serializers.CharField(source='created_by.username', read_only=True, default=None)
+
+    class Meta:
+        model = CalendarEvent
+        fields = (
+            'id', 'title', 'description', 'date', 'created_by', 'created_by_username',
+            'created_at', 'updated_at',
+        )
+        read_only_fields = ('created_by', 'created_at', 'updated_at')
+
+
+class AssetSerializer(serializers.ModelSerializer):
+    owner_username = serializers.CharField(source='owner.username', read_only=True, default=None)
+
+    class Meta:
+        model = Asset
+        fields = (
+            'id', 'asset_id', 'name', 'description', 'asset_type', 'sensitivity', 'status',
+            'owner', 'owner_username', 'created_at', 'updated_at',
+        )
+        read_only_fields = ('created_at', 'updated_at')
 
 
 class DocumentRevisionSerializer(serializers.ModelSerializer):
@@ -17,12 +42,15 @@ class DocumentRevisionSerializer(serializers.ModelSerializer):
 
 class DocumentSerializer(serializers.ModelSerializer):
     owner_username = serializers.CharField(source='owner.username', read_only=True, default=None)
+    reviewer_username = serializers.CharField(source='reviewer.username', read_only=True, default=None)
+    approver_username = serializers.CharField(source='approver.username', read_only=True, default=None)
 
     class Meta:
         model = Document
         fields = (
-            'id', 'title', 'content', 'version', 'status',
-            'owner', 'owner_username', 'reviewed_at', 'created_at', 'updated_at',
+            'id', 'doc_id', 'category', 'title', 'content', 'file', 'version', 'status', 'classification',
+            'owner', 'owner_username', 'reviewer', 'reviewer_username', 'approver', 'approver_username',
+            'reviewed_at', 'created_at', 'updated_at',
         )
         # status is read-only here on purpose: it must only ever change via
         # WorkflowStepViewSet.decide() completing an approval (which sets it
@@ -30,14 +58,29 @@ class DocumentSerializer(serializers.ModelSerializer):
         # a plain PATCH. Otherwise anyone with document-write access could
         # set status="approved" themselves, skipping the approval workflow
         # and the 21 CFR Part 11 electronic signature it requires entirely.
+        # reviewer/approver ARE plain-writable — they're informational
+        # assignment, not the enforced approval gate (see Document's
+        # docstring comment on those fields).
         read_only_fields = ('version', 'status', 'created_at', 'updated_at')
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if instance.file:
+            # Same reasoning as EvidenceSerializer: point at our own
+            # authenticated download action, not the storage backend's
+            # own URL (local disk's /media/ has no auth check at all, and
+            # a private S3 object can't be handed out as a plain link).
+            data['file'] = f'/api/documents/{instance.pk}/download/'
+        return data
 
 
 class RiskSerializer(serializers.ModelSerializer):
+    asset_name = serializers.CharField(source='asset.name', read_only=True, default=None)
+
     class Meta:
         model = Risk
         fields = (
-            'id', 'name', 'description', 'likelihood', 'impact', 'status', 'owner',
+            'id', 'name', 'description', 'likelihood', 'impact', 'status', 'owner', 'asset', 'asset_name',
             'treatment_plan', 'target_date', 'residual_likelihood', 'residual_impact', 'created_at',
         )
         read_only_fields = ('created_at',)
@@ -91,10 +134,56 @@ class CorrectiveActionSerializer(serializers.ModelSerializer):
     class Meta:
         model = CorrectiveAction
         fields = (
-            'id', 'title', 'description', 'action_type', 'status', 'owner',
-            'audit', 'risk', 'incident', 'due_date', 'closed_date', 'created_at', 'updated_at',
+            'id', 'title', 'description', 'action_type', 'status', 'owner', 'root_cause',
+            'effectiveness_notes', 'audit', 'risk', 'incident', 'due_date', 'closed_date',
+            'created_at', 'updated_at',
         )
+        # closed_date/effectiveness_notes are set only by the signed close
+        # action (CorrectiveActionViewSet.close), not a plain PATCH — see
+        # that view's perform_update, which additionally blocks setting
+        # status=closed directly (the same bypass Document.status once had).
+        read_only_fields = ('closed_date', 'effectiveness_notes', 'created_at', 'updated_at')
+
+
+class NonconformanceSerializer(serializers.ModelSerializer):
+    reported_by_username = serializers.CharField(source='reported_by.username', read_only=True, default=None)
+
+    class Meta:
+        model = Nonconformance
+        fields = (
+            'id', 'title', 'description', 'status', 'reported_by', 'reported_by_username',
+            'closure_reason', 'resulting_capa', 'created_at', 'updated_at',
+        )
+        # status/closure_reason/resulting_capa only change via the
+        # close_no_action/escalate actions (NonconformanceViewSet) — never
+        # a plain PATCH, so triage is always a deliberate, logged act.
+        read_only_fields = (
+            'status', 'reported_by', 'closure_reason', 'resulting_capa', 'created_at', 'updated_at',
+        )
+
+
+class ApprovalMatrixRuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ApprovalMatrixRule
+        fields = ('id', 'entity_type', 'required_role', 'active', 'created_at', 'updated_at')
         read_only_fields = ('created_at', 'updated_at')
+
+    def validate_required_role(self, value):
+        if value not in ('admin', 'auditor', 'user'):
+            raise serializers.ValidationError('required_role must be one of: admin, auditor, user.')
+        return value
+
+
+class ApprovalRecordSerializer(serializers.ModelSerializer):
+    approved_by_username = serializers.CharField(source='approved_by.username', read_only=True)
+
+    class Meta:
+        model = ApprovalRecord
+        fields = (
+            'id', 'entity_type', 'object_id', 'approved_by', 'approved_by_username',
+            'document_number', 'review_date', 'approved_at',
+        )
+        read_only_fields = ('approved_by', 'approved_at')
 
 
 class EvidenceSerializer(serializers.ModelSerializer):

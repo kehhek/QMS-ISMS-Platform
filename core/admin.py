@@ -2,21 +2,25 @@ from django.contrib import admin
 from .models import (
     Document, DocumentRevision, Risk, Supplier, Control, Incident, Audit, CorrectiveAction,
     Evidence, Workflow, WorkflowStep, AuditLog, ElectronicSignature, TrainingRecord,
+    Asset, Nonconformance, ApprovalMatrixRule, ApprovalRecord, CalendarEvent,
 )
 
 
 class DocumentRevisionInline(admin.TabularInline):
     model = DocumentRevision
     extra = 0
-    readonly_fields = ('version', 'content', 'status', 'changed_by', 'created_at')
+    readonly_fields = ('version', 'content', 'status', 'file', 'changed_by', 'created_at')
     can_delete = False
 
 
 @admin.register(Document)
 class DocumentAdmin(admin.ModelAdmin):
-    list_display = ('title', 'status', 'version', 'owner', 'reviewed_at', 'created_at')
-    list_filter = ('status',)
-    search_fields = ('title', 'content')
+    list_display = (
+        'doc_id', 'title', 'category', 'status', 'classification', 'version',
+        'owner', 'reviewer', 'approver', 'created_at',
+    )
+    list_filter = ('category', 'status', 'classification')
+    search_fields = ('doc_id', 'title', 'content')
     inlines = [DocumentRevisionInline]
 
     def save_model(self, request, obj, form, change):
@@ -25,9 +29,22 @@ class DocumentAdmin(admin.ModelAdmin):
         super().save_model(request, obj, form, change)
 
 
+@admin.register(CalendarEvent)
+class CalendarEventAdmin(admin.ModelAdmin):
+    list_display = ('title', 'date', 'created_by', 'created_at')
+    search_fields = ('title', 'description')
+
+
+@admin.register(Asset)
+class AssetAdmin(admin.ModelAdmin):
+    list_display = ('asset_id', 'name', 'asset_type', 'sensitivity', 'status', 'owner', 'created_at')
+    list_filter = ('asset_type', 'sensitivity', 'status')
+    search_fields = ('asset_id', 'name', 'description')
+
+
 @admin.register(Risk)
 class RiskAdmin(admin.ModelAdmin):
-    list_display = ('name', 'status', 'likelihood', 'impact', 'owner', 'target_date', 'created_at')
+    list_display = ('name', 'status', 'likelihood', 'impact', 'owner', 'asset', 'target_date', 'created_at')
     list_filter = ('status',)
 
 
@@ -66,7 +83,32 @@ class AuditAdmin(admin.ModelAdmin):
 class CorrectiveActionAdmin(admin.ModelAdmin):
     list_display = ('title', 'action_type', 'status', 'owner', 'audit', 'risk', 'incident', 'due_date', 'closed_date')
     list_filter = ('action_type', 'status')
+    search_fields = ('title', 'description', 'root_cause')
+
+
+@admin.register(Nonconformance)
+class NonconformanceAdmin(admin.ModelAdmin):
+    list_display = ('title', 'status', 'reported_by', 'resulting_capa', 'created_at')
+    list_filter = ('status',)
     search_fields = ('title', 'description')
+
+
+@admin.register(ApprovalMatrixRule)
+class ApprovalMatrixRuleAdmin(admin.ModelAdmin):
+    list_display = ('entity_type', 'required_role', 'active', 'updated_at')
+    list_filter = ('entity_type', 'active')
+
+
+@admin.register(ApprovalRecord)
+class ApprovalRecordAdmin(admin.ModelAdmin):
+    list_display = ('entity_type', 'object_id', 'approved_by', 'approved_at', 'document_number')
+    list_filter = ('entity_type',)
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(TrainingRecord)

@@ -1,12 +1,18 @@
 import React, { useState } from 'react'
 import { downloadFile } from './api'
 
-export default function ExportCsvButton({ token, path, filename }) {
+// `query` (e.g. "category=policy"), not baked into `path`, since the
+// export-csv action is itself a real URL segment appended after `path`
+// — a query string folded into `path` would land in the wrong place
+// ("/documents/?category=policy&export-csv/" instead of
+// "/documents/export-csv/?category=policy").
+export default function ExportCsvButton({ token, path, filename, query }) {
   const [error, setError] = useState(null)
 
   const click = () => {
     setError(null)
-    downloadFile(`${path}export-csv/`, token, filename || 'export.csv').catch((err) => setError(err.message))
+    const url = `${path}export-csv/${query ? `?${query}` : ''}`
+    downloadFile(url, token, filename || 'export.csv').catch((err) => setError(err.message))
   }
 
   return (

@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Client, Domain, Membership, DemoRequest
+from .models import Client, Domain, Membership, DemoRequest, AccessReview, UserGroup, UserGroupMember
 
 
 @admin.register(Client)
@@ -16,6 +16,32 @@ class DomainAdmin(admin.ModelAdmin):
 class MembershipAdmin(admin.ModelAdmin):
     list_display = ('user', 'tenant', 'role', 'created_at')
     list_filter = ('role', 'tenant')
+
+
+@admin.register(AccessReview)
+class AccessReviewAdmin(admin.ModelAdmin):
+    list_display = ('membership', 'outcome', 'reviewed_by', 'reviewed_at')
+    list_filter = ('outcome',)
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+class UserGroupMemberInline(admin.TabularInline):
+    model = UserGroupMember
+    extra = 0
+    readonly_fields = ('added_at',)
+
+
+@admin.register(UserGroup)
+class UserGroupAdmin(admin.ModelAdmin):
+    list_display = ('name', 'tenant', 'created_at')
+    list_filter = ('tenant',)
+    search_fields = ('name', 'description')
+    inlines = [UserGroupMemberInline]
 
 
 @admin.register(DemoRequest)

@@ -30,11 +30,17 @@ class CsvExportMixin:
         writer.writeheader()
         for row in rows:
             # M2M / nested fields serialize as lists (e.g. Control.risks,
-            # Audit.related_documents) — flatten to a readable string
-            # rather than leaving a raw Python list repr in the cell.
-            flat = {
-                key: (', '.join(str(v) for v in value) if isinstance(value, list) else value)
-                for key, value in row.items()
-            }
+            # Audit.related_documents) and nested objects serialize as
+            # dicts (e.g. Membership.last_review) — flatten both to a
+            # readable string rather than a raw Python repr in the cell.
+            flat = {key: self._flatten_cell(value) for key, value in row.items()}
             writer.writerow(flat)
         return response
+
+    @staticmethod
+    def _flatten_cell(value):
+        if isinstance(value, list):
+            return ', '.join(str(v) for v in value)
+        if isinstance(value, dict):
+            return '; '.join(f'{k}={v}' for k, v in value.items())
+        return value

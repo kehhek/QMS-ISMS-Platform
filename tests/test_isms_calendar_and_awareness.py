@@ -84,6 +84,81 @@ class IsmsCalendarTests(TestCase):
         self.assertEqual(upcoming_dates, sorted(upcoming_dates))
 
 
+class CalendarEventTests(TestCase):
+    """Custom ISMS Calendar entries — the one kind of date nothing else
+    in the schema implies, and the only calendar source that's ever
+    directly created/edited/deleted as itself."""
+
+    def setUp(self):
+        self.tenant = make_tenant('calendareventtest')
+        self.host = f'{self.tenant.schema_name}.localhost'
+        self.user = make_member(self.tenant, 'ce_user', Membership.Role.USER)
+        self.admin = make_member(self.tenant, 'ce_admin', Membership.Role.ADMIN)
+
+    def test_plain_user_cannot_create_a_custom_event(self):
+        api = APIClient()
+        api.force_authenticate(user=self.user)
+        resp = api.post(
+            '/api/calendar-events/', {'title': 'Board review', 'date': str(timezone.localdate())},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_admin_can_create_a_custom_event(self):
+        api = APIClient()
+        api.force_authenticate(user=self.admin)
+        resp = api.post(
+            '/api/calendar-events/', {'title': 'Board review', 'date': str(timezone.localdate())},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(resp.data['created_by_username'], 'ce_admin')
+
+    def test_plain_user_can_still_read_custom_events(self):
+        with schema_context(self.tenant.schema_name):
+            from core.models import CalendarEvent
+            CalendarEvent.objects.create(title='Board review', date=timezone.localdate())
+
+        api = APIClient()
+        api.force_authenticate(user=self.user)
+        resp = api.get('/api/calendar-events/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['count'], 1)
+
+    def test_a_custom_event_appears_on_the_isms_calendar(self):
+        today = timezone.localdate()
+        with schema_context(self.tenant.schema_name):
+            from core.models import CalendarEvent
+            CalendarEvent.objects.create(title='Overdue custom thing', date=today - timedelta(days=1))
+            CalendarEvent.objects.create(title='Upcoming custom thing', date=today + timedelta(days=1))
+
+        api = APIClient()
+        api.force_authenticate(user=self.user)
+        resp = api.get('/api/isms-calendar/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200)
+
+        overdue_kinds = {(e['kind'], e['title']) for e in resp.data['overdue']}
+        upcoming_kinds = {(e['kind'], e['title']) for e in resp.data['upcoming']}
+        self.assertIn(('custom', 'Overdue custom thing'), overdue_kinds)
+        self.assertIn(('custom', 'Upcoming custom thing'), upcoming_kinds)
+
+    def test_admin_can_edit_and_delete_a_custom_event(self):
+        with schema_context(self.tenant.schema_name):
+            from core.models import CalendarEvent
+            event = CalendarEvent.objects.create(title='Original', date=timezone.localdate())
+
+        api = APIClient()
+        api.force_authenticate(user=self.admin)
+        edit = api.patch(
+            f'/api/calendar-events/{event.pk}/', {'title': 'Renamed'}, format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(edit.status_code, 200)
+        self.assertEqual(edit.data['title'], 'Renamed')
+
+        delete = api.delete(f'/api/calendar-events/{event.pk}/', HTTP_HOST=self.host)
+        self.assertEqual(delete.status_code, 204)
+
+
 class ApprovalMatrixTests(TestCase):
     def test_matrix_reflects_real_viewset_permissions(self):
         tenant = make_tenant('matrixtest')

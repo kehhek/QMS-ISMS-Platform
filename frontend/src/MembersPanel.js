@@ -3,12 +3,15 @@ import { apiFetch, unwrapList } from './api'
 
 export default function MembersPanel({ token }) {
   const [members, setMembers] = useState([])
+  const [groups, setGroups] = useState([])
+  const [groupFilter, setGroupFilter] = useState('')
   const [error, setError] = useState(null)
   const [lastGeneratedPassword, setLastGeneratedPassword] = useState(null)
   const [form, setForm] = useState({ username: '', email: '', role: 'user' })
 
   const load = () => {
-    apiFetch('/tenant/members/', token)
+    const query = groupFilter ? `?group=${groupFilter}` : ''
+    apiFetch(`/tenant/members/${query}`, token)
       .then((data) => setMembers(unwrapList(data)))
       .catch((err) => setError(err.message))
   }
@@ -16,6 +19,11 @@ export default function MembersPanel({ token }) {
   useEffect(() => {
     if (token) load()
     // eslint-disable-next-line
+  }, [token, groupFilter])
+
+  useEffect(() => {
+    if (!token) return
+    apiFetch('/tenant/user-groups/', token).then((data) => setGroups(unwrapList(data))).catch(() => setGroups([]))
   }, [token])
 
   const invite = (e) => {
@@ -41,7 +49,11 @@ export default function MembersPanel({ token }) {
           New user created — generated password (shown once): <code>{lastGeneratedPassword}</code>
         </p>
       )}
-      <p className="panel-hint">Adding a member requires the "admin" role in this tenant (or superuser).</p>
+      <p className="panel-hint">
+        Adding a member requires the "admin" role in this tenant (or superuser). Manage teams
+        (Quality, Security, …) on the User Groups tab — groups are org-structure labels only, not
+        a permissions boundary; role still decides what someone can do.
+      </p>
       <form onSubmit={invite} className="toolbar">
         <input
           placeholder="Username"
@@ -65,8 +77,15 @@ export default function MembersPanel({ token }) {
         </select>
         <button type="submit" className="btn-primary">Add / Update Member</button>
       </form>
+      <div className="toolbar">
+        <span className="field-label">Filter by group:</span>
+        <select value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)}>
+          <option value="">All members</option>
+          {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+        </select>
+      </div>
       {members.length === 0 ? (
-        <p className="empty-state">No members yet.</p>
+        <p className="empty-state">No members{groupFilter ? ' in this group' : ''} yet.</p>
       ) : (
         <table>
           <thead>
@@ -74,6 +93,7 @@ export default function MembersPanel({ token }) {
               <th>Username</th>
               <th>Email</th>
               <th>Role</th>
+              <th>Groups</th>
               <th>Since</th>
             </tr>
           </thead>
@@ -83,6 +103,7 @@ export default function MembersPanel({ token }) {
                 <td>{m.username}</td>
                 <td>{m.email}</td>
                 <td><span className="badge badge-neutral">{m.role}</span></td>
+                <td>{m.groups && m.groups.length ? m.groups.join(', ') : '—'}</td>
                 <td>{new Date(m.created_at).toLocaleDateString()}</td>
               </tr>
             ))}

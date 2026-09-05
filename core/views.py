@@ -1,27 +1,30 @@
 from django.contrib.contenttypes.models import ContentType
 from django.db.models import Count
 from django.utils import timezone
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, mixins
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from tenants.permissions import HasTenantRole, HasTenantRoleStrict, get_role
 
 from .audit import log_action
+from .approval_matrix import assert_approval_gate, ApprovalRequiredError
 from .calendar import get_isms_calendar_events
 from .export import CsvExportMixin
 from .signatures import create_signature
 from .models import (
     Document, DocumentRevision, Risk, Supplier, Control, Incident, Audit, CorrectiveAction,
     Evidence, Workflow, WorkflowStep, AuditLog, ElectronicSignature, TrainingRecord,
+    Asset, Nonconformance, ApprovalMatrixRule, ApprovalRecord, CalendarEvent,
 )
 from .serializers import (
     DocumentSerializer, DocumentRevisionSerializer, RiskSerializer, SupplierSerializer, ControlSerializer,
     IncidentSerializer, AuditSerializer, CorrectiveActionSerializer, EvidenceSerializer,
     WorkflowSerializer, WorkflowStepSerializer, AuditLogSerializer, ElectronicSignatureSerializer,
-    TrainingRecordSerializer,
+    TrainingRecordSerializer, AssetSerializer, NonconformanceSerializer, CalendarEventSerializer,
+    ApprovalMatrixRuleSerializer, ApprovalRecordSerializer,
 )
 
 
@@ -58,12 +61,68 @@ class DocumentViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
     # Auditors review documents but shouldn't be the ones editing them.
     allowed_roles = ['admin', 'user']
 
+    def get_queryset(self):
+        # Policy/SOP/Work Instruction each get their own console tab,
+        # filtered to their own category — a document only ever shows up
+        # on one page. `?category=general` (what the plain Documents tab
+        # requests) naturally excludes the other three since every
+        # document defaults to "general" unless explicitly categorized.
+        qs = Document.objects.all()
+        category = self.request.query_params.get('category')
+        if category:
+            qs = qs.filter(category=category)
+        # Lets a page track "just the Draft ones" etc. — see also
+        # status_summary below, which counts across all four regardless
+        # of which one (if any) is currently selected here.
+        doc_status = self.request.query_params.get('status')
+        if doc_status:
+            qs = qs.filter(status=doc_status)
+        return qs
+
+    @action(detail=False, methods=['get'], url_path='status-summary')
+    def status_summary(self, request):
+        """How many documents are in each of Draft/In Review/Approved/
+        Archived — scoped to the same `?category=` this page is already
+        viewing (so the Policies page counts policies, not every
+        document in the tenant), but deliberately ignores `?status=`
+        itself so selecting one status to filter by doesn't collapse
+        this summary down to just that one count."""
+        qs = Document.objects.all()
+        category = request.query_params.get('category')
+        if category:
+            qs = qs.filter(category=category)
+        counts = {row['status']: row['count'] for row in qs.values('status').annotate(count=Count('id'))}
+        return Response({value: counts.get(value, 0) for value in Document.Status.values})
+
+    def perform_create(self, serializer):
+        # Author/created by defaults to whoever's creating it, same as
+        # AssetViewSet's owner default — still reassignable afterward.
+        instance = serializer.save(owner=serializer.validated_data.get('owner') or self.request.user)
+        self._log(AuditLog.Action.CREATE, instance)
+
     def perform_update(self, serializer):
         # Document.save() reads this to attribute the resulting DocumentRevision.
         if serializer.instance is not None:
             serializer.instance._revision_actor = self.request.user
         instance = serializer.save()
         self._log(AuditLog.Action.UPDATE, instance)
+
+    @action(detail=True, methods=['get'])
+    def download(self, request, pk=None):
+        """Streams the decrypted attached file back through our own
+        authentication and RBAC — same reasoning as
+        EvidenceViewSet.download (local disk's /media/ has no auth check
+        at all, and a private S3 object can't be handed out as a plain
+        link)."""
+        from django.http import FileResponse
+
+        document = self.get_object()
+        if not document.file:
+            return Response({'detail': 'This document has no attached file.'}, status=status.HTTP_404_NOT_FOUND)
+        return FileResponse(
+            document.file.open('rb'), as_attachment=True,
+            filename=document.file.name.rsplit('/', 1)[-1],
+        )
 
 
 class DocumentRevisionViewSet(viewsets.ReadOnlyModelViewSet):
@@ -78,8 +137,53 @@ class DocumentRevisionViewSet(viewsets.ReadOnlyModelViewSet):
         return qs
 
 
+class CalendarEventViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
+    """Custom ISMS Calendar entries — see CalendarEvent's docstring. Any
+    tenant member reads (it's a visibility tool, same as the calendar
+    itself); creating/editing/deleting a custom entry is admin/auditor
+    only, the same tier as scheduling an Audit."""
+
+    queryset = CalendarEvent.objects.select_related('created_by').all()
+    serializer_class = CalendarEventSerializer
+    permission_classes = [HasTenantRole]
+    allowed_roles = ['admin', 'auditor']
+
+    def perform_create(self, serializer):
+        instance = serializer.save(created_by=self.request.user)
+        self._log(AuditLog.Action.CREATE, instance)
+
+
+class AssetViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
+    """See Asset's docstring for the permission tiers: any member
+    creates, admin/auditor edits, admin removes — enforced explicitly
+    below rather than via `allowed_roles`, same reasoning as
+    TrainingRecordViewSet (a blanket allowed_roles would gate every
+    write at the same tier, which isn't what's wanted here)."""
+
+    queryset = Asset.objects.select_related('owner').all()
+    serializer_class = AssetSerializer
+    permission_classes = [HasTenantRole]
+
+    def perform_create(self, serializer):
+        # Defaults to the creator as owner if none was given.
+        instance = serializer.save(owner=serializer.validated_data.get('owner') or self.request.user)
+        self._log(AuditLog.Action.CREATE, instance)
+
+    def perform_update(self, serializer):
+        if get_role(self.request.user) not in ('admin', 'auditor') and not self.request.user.is_superuser:
+            raise PermissionDenied('Only admins/auditors can edit or reassign an asset.')
+        instance = serializer.save()
+        self._log(AuditLog.Action.UPDATE, instance)
+
+    def perform_destroy(self, instance):
+        if get_role(self.request.user) != 'admin' and not self.request.user.is_superuser:
+            raise PermissionDenied('Only an admin can remove an asset.')
+        self._log(AuditLog.Action.DELETE, instance)
+        instance.delete()
+
+
 class RiskViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
-    queryset = Risk.objects.all()
+    queryset = Risk.objects.select_related('asset').all()
     serializer_class = RiskSerializer
     permission_classes = [HasTenantRole]
     allowed_roles = ['admin', 'user']
@@ -131,12 +235,121 @@ class CorrectiveActionViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelV
     # Any tenant member can raise/work a CAPA item.
     allowed_roles = ['admin', 'auditor', 'user']
 
+    def perform_update(self, serializer):
+        # Closing is a deliberate, signed act (close(), below) — a plain
+        # PATCH to status="closed" would bypass the effectiveness
+        # verification signature and any configured Approval Matrix gate,
+        # the same bypass Document.status once had.
+        if serializer.validated_data.get('status') == CorrectiveAction.Status.CLOSED:
+            raise ValidationError({
+                'status': 'Closing a CAPA requires the close action (effectiveness verification '
+                          'sign-off), not a direct status change.',
+            })
+        instance = serializer.save()
+        self._log(AuditLog.Action.UPDATE, instance)
+
+    @action(detail=True, methods=['post'])
+    def close(self, request, pk=None):
+        capa = self.get_object()
+        if capa.status == CorrectiveAction.Status.CLOSED:
+            return Response({'detail': 'This CAPA is already closed.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        password = request.data.get('password')
+        if not password or not request.user.check_password(password):
+            log_action(request.user, AuditLog.Action.SIGNATURE_FAILED, capa, metadata={'reason': 'invalid_password'})
+            return Response(
+                {'detail': 'Incorrect password. Closing a CAPA requires re-entering your password.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            assert_approval_gate(ApprovalMatrixRule.EntityType.CORRECTIVE_ACTION, capa.pk)
+        except ApprovalRequiredError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_403_FORBIDDEN)
+
+        capa.status = CorrectiveAction.Status.CLOSED
+        capa.closed_date = timezone.now().date()
+        capa.effectiveness_notes = request.data.get('effectiveness_notes', '')
+        capa.save()
+
+        create_signature(request.user, ElectronicSignature.Meaning.VERIFIED, capa)
+        log_action(request.user, AuditLog.Action.APPROVE, capa, metadata={'action': 'capa_close'})
+        return Response(CorrectiveActionSerializer(capa).data)
+
+
+class NonconformanceViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
+    """A lower-barrier "something's wrong" front door than a full CAPA —
+    see Nonconformance's docstring. Anyone reports one (allowed_roles
+    left unset -> any member); triaging it (close_no_action/escalate) is
+    admin/auditor only, enforced explicitly below rather than via
+    allowed_roles for the same reason AssetViewSet/TrainingRecordViewSet
+    already do this — a blanket allowed_roles would also gate the
+    open-to-everyone create."""
+
+    queryset = Nonconformance.objects.all()
+    serializer_class = NonconformanceSerializer
+    permission_classes = [HasTenantRole]
+
+    def perform_create(self, serializer):
+        instance = serializer.save(reported_by=self.request.user)
+        self._log(AuditLog.Action.CREATE, instance)
+
+    def _require_triage_role(self, request):
+        if not request.user.is_superuser and get_role(request.user) not in ('admin', 'auditor'):
+            raise PermissionDenied('Only admins/auditors can triage a nonconformance.')
+
+    @action(detail=True, methods=['post'])
+    def close_no_action(self, request, pk=None):
+        nc = self.get_object()
+        self._require_triage_role(request)
+        if nc.status in (Nonconformance.Status.CLOSED_NO_ACTION, Nonconformance.Status.ESCALATED):
+            return Response({'detail': 'This nonconformance is already closed.'}, status=status.HTTP_400_BAD_REQUEST)
+        nc.status = Nonconformance.Status.CLOSED_NO_ACTION
+        nc.closure_reason = request.data.get('closure_reason', '')
+        nc.save()
+        self._log(AuditLog.Action.UPDATE, nc)
+        return Response(NonconformanceSerializer(nc).data)
+
+    @action(detail=True, methods=['post'])
+    def escalate(self, request, pk=None):
+        nc = self.get_object()
+        self._require_triage_role(request)
+        if nc.status in (Nonconformance.Status.CLOSED_NO_ACTION, Nonconformance.Status.ESCALATED):
+            return Response({'detail': 'This nonconformance is already closed.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        capa = CorrectiveAction.objects.create(
+            title=f'CAPA: {nc.title}',
+            description=nc.description,
+            action_type=CorrectiveAction.ActionType.CORRECTIVE,
+        )
+        self._log(AuditLog.Action.CREATE, capa)
+
+        nc.status = Nonconformance.Status.ESCALATED
+        nc.resulting_capa = capa
+        nc.save()
+        self._log(AuditLog.Action.UPDATE, nc)
+        return Response(NonconformanceSerializer(nc).data)
+
 
 class EvidenceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     queryset = Evidence.objects.all()
     serializer_class = EvidenceSerializer
     permission_classes = [HasTenantRole]
     allowed_roles = ['admin', 'auditor', 'user']
+
+    def get_queryset(self):
+        # Lets a record's own page (e.g. a Control row's "Attachments"
+        # section) show just its evidence instead of the whole flat
+        # Evidence tab — same generic FK Evidence already uses, just
+        # filtered down to one (content_type, object_id) pair.
+        qs = Evidence.objects.all()
+        content_type = self.request.query_params.get('content_type')
+        object_id = self.request.query_params.get('object_id')
+        if content_type:
+            qs = qs.filter(content_type_id=content_type)
+        if object_id:
+            qs = qs.filter(object_id=object_id)
+        return qs
 
     def perform_create(self, serializer):
         instance = serializer.save(uploaded_by=self.request.user)
@@ -275,6 +488,17 @@ class WorkflowStepViewSet(viewsets.ReadOnlyModelViewSet):
                 {'detail': 'Incorrect password. Electronic signatures require re-entering your password.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
+
+        # Approval Matrix: an OPTIONAL extra sign-off gate, checked only
+        # for "approved" — rejecting a step is the conservative outcome
+        # and was never meant to need additional permission. Off by
+        # default (see ApprovalMatrixRule); a configured, unsatisfied
+        # rule blocks the decision before anything is written.
+        if decision == 'approved':
+            try:
+                assert_approval_gate(ApprovalMatrixRule.EntityType.WORKFLOW_STEP, step.pk)
+            except ApprovalRequiredError as exc:
+                return Response({'detail': str(exc)}, status=status.HTTP_403_FORBIDDEN)
 
         step.status = WorkflowStep.Status.APPROVED if decision == 'approved' else WorkflowStep.Status.REJECTED
         step.comment = request.data.get('comment', '')
@@ -482,4 +706,75 @@ class ApprovalMatrixView(APIView):
             'can_write': [],
             'can_read': ['admin', 'auditor'],
         })
+        # Tiered-permission viewsets (AssetViewSet/NonconformanceViewSet)
+        # don't set a blanket allowed_roles — their write tiers differ by
+        # action, checked explicitly in perform_update/perform_destroy —
+        # so they're documented here rather than misreported as "any
+        # member can write everything".
+        rows.append({
+            'record_type': 'Assets (create)',
+            'can_write': self.ALL_ROLES,
+            'can_read': self.ALL_ROLES,
+        })
+        rows.append({
+            'record_type': 'Assets (edit/reassign)',
+            'can_write': ['admin', 'auditor'],
+            'can_read': self.ALL_ROLES,
+        })
+        rows.append({
+            'record_type': 'Assets (delete)',
+            'can_write': ['admin'],
+            'can_read': self.ALL_ROLES,
+        })
+        rows.append({
+            'record_type': 'Nonconformances (report)',
+            'can_write': self.ALL_ROLES,
+            'can_read': self.ALL_ROLES,
+        })
+        rows.append({
+            'record_type': 'Nonconformances (triage: close/escalate)',
+            'can_write': ['admin', 'auditor'],
+            'can_read': self.ALL_ROLES,
+        })
         return Response(rows)
+
+
+class ApprovalMatrixRuleViewSet(viewsets.ModelViewSet):
+    """Configures the OPTIONAL extra sign-off gate — see
+    ApprovalMatrixRule's docstring and core/approval_matrix.py. Admin-only:
+    this changes what everyone else is blocked by, same tier as managing
+    tenant members."""
+
+    queryset = ApprovalMatrixRule.objects.all()
+    serializer_class = ApprovalMatrixRuleSerializer
+    permission_classes = [HasTenantRole]
+    allowed_roles = ['admin']
+
+
+class ApprovalRecordViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+    """Records satisfaction of an ApprovalMatrixRule. Create-only (no
+    update/destroy — see ApprovalRecord's immutability) and password-
+    confirmed, the same "re-verify at the moment of signing" pattern
+    every other e-signed action in this app uses."""
+
+    queryset = ApprovalRecord.objects.select_related('approved_by').all()
+    serializer_class = ApprovalRecordSerializer
+    permission_classes = [HasTenantRole]
+
+    def perform_create(self, serializer):
+        entity_type = serializer.validated_data['entity_type']
+        rule = ApprovalMatrixRule.objects.filter(entity_type=entity_type, active=True).first()
+        if not rule:
+            raise ValidationError({'entity_type': 'No active approval rule is configured for this entity type.'})
+
+        user = self.request.user
+        if not user.is_superuser and get_role(user) != rule.required_role:
+            raise PermissionDenied(f'Only a {rule.required_role} can record this approval.')
+
+        password = self.request.data.get('password')
+        if not password or not user.check_password(password):
+            log_action(user, AuditLog.Action.SIGNATURE_FAILED, rule, metadata={'reason': 'invalid_password'})
+            raise PermissionDenied('Incorrect password. Recording an approval requires re-entering your password.')
+
+        instance = serializer.save(approved_by=user)
+        log_action(user, AuditLog.Action.APPROVE, instance)
