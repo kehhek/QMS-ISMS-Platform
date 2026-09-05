@@ -10,11 +10,11 @@ const TONE_BY_VALUE = {
 
   in_review: 'warning', partial: 'warning', in_progress: 'warning', planned: 'warning',
   mitigating: 'warning', pending: 'warning', investigating: 'warning', contained: 'warning',
-  open: 'warning', medium: 'warning',
+  open: 'warning', medium: 'warning', under_review: 'warning',
 
   rejected: 'danger', cancelled: 'danger', not_implemented: 'danger', critical: 'danger', high: 'danger',
 
-  draft: 'neutral', not_applicable: 'neutral', skipped: 'neutral', low: 'neutral',
+  draft: 'neutral', not_applicable: 'neutral', skipped: 'neutral', low: 'neutral', inactive: 'neutral',
 }
 
 export default function StatusBadge({ value }) {

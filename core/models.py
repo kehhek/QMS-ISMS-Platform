@@ -102,6 +102,35 @@ class Risk(models.Model):
         return self.name
 
 
+class Supplier(models.Model):
+    """A third-party vendor/supplier, tracked for ISO 27001 A.5.19-A.5.22
+    (information security in supplier relationships) and general vendor
+    risk management."""
+
+    class Status(models.TextChoices):
+        ACTIVE = 'active', 'Active'
+        UNDER_REVIEW = 'under_review', 'Under review'
+        INACTIVE = 'inactive', 'Inactive'
+
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    contact_name = models.CharField(max_length=255, blank=True)
+    contact_email = models.EmailField(blank=True)
+    contact_phone = models.CharField(max_length=50, blank=True)
+    website = models.URLField(blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.UNDER_REVIEW)
+    risks = models.ManyToManyField(Risk, blank=True, related_name='suppliers')
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
 class Control(models.Model):
     """An ISMS control (e.g. an ISO 27001 Annex A control, or a SOC 2
     Common Criterion) and how well it's implemented, mapped to the risks

@@ -3,9 +3,9 @@ from django.http import JsonResponse
 from rest_framework.routers import DefaultRouter
 
 from .views import (
-    DocumentViewSet, DocumentRevisionViewSet, RiskViewSet, ControlViewSet, IncidentViewSet,
-    AuditViewSet, CorrectiveActionViewSet, EvidenceViewSet, WorkflowViewSet, WorkflowStepViewSet,
-    AuditLogViewSet, CoreContentTypesView, DashboardSummaryView,
+    DocumentViewSet, DocumentRevisionViewSet, RiskViewSet, SupplierViewSet, ControlViewSet,
+    IncidentViewSet, AuditViewSet, CorrectiveActionViewSet, EvidenceViewSet, WorkflowViewSet,
+    WorkflowStepViewSet, AuditLogViewSet, CoreContentTypesView, DashboardSummaryView,
 )
 
 
@@ -17,6 +17,7 @@ router = DefaultRouter()
 router.register(r'documents', DocumentViewSet, basename='document')
 router.register(r'document-revisions', DocumentRevisionViewSet, basename='document-revision')
 router.register(r'risks', RiskViewSet, basename='risk')
+router.register(r'suppliers', SupplierViewSet, basename='supplier')
 router.register(r'controls', ControlViewSet, basename='control')
 router.register(r'incidents', IncidentViewSet, basename='incident')
 router.register(r'audits', AuditViewSet, basename='audit')

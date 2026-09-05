@@ -1,6 +1,6 @@
 from django.contrib import admin
 from .models import (
-    Document, DocumentRevision, Risk, Control, Incident, Audit, CorrectiveAction,
+    Document, DocumentRevision, Risk, Supplier, Control, Incident, Audit, CorrectiveAction,
     Evidence, Workflow, WorkflowStep, AuditLog,
 )
 
@@ -29,6 +29,14 @@ class DocumentAdmin(admin.ModelAdmin):
 class RiskAdmin(admin.ModelAdmin):
     list_display = ('name', 'status', 'likelihood', 'impact', 'owner', 'target_date', 'created_at')
     list_filter = ('status',)
+
+
+@admin.register(Supplier)
+class SupplierAdmin(admin.ModelAdmin):
+    list_display = ('name', 'status', 'contact_name', 'contact_email', 'created_at')
+    list_filter = ('status',)
+    search_fields = ('name', 'description', 'contact_name', 'contact_email')
+    filter_horizontal = ('risks',)
 
 
 @admin.register(Control)

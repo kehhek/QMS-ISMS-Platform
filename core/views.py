@@ -11,11 +11,11 @@ from tenants.permissions import HasTenantRole, HasTenantRoleStrict, get_role
 
 from .audit import log_action
 from .models import (
-    Document, DocumentRevision, Risk, Control, Incident, Audit, CorrectiveAction,
+    Document, DocumentRevision, Risk, Supplier, Control, Incident, Audit, CorrectiveAction,
     Evidence, Workflow, WorkflowStep, AuditLog,
 )
 from .serializers import (
-    DocumentSerializer, DocumentRevisionSerializer, RiskSerializer, ControlSerializer,
+    DocumentSerializer, DocumentRevisionSerializer, RiskSerializer, SupplierSerializer, ControlSerializer,
     IncidentSerializer, AuditSerializer, CorrectiveActionSerializer, EvidenceSerializer,
     WorkflowSerializer, WorkflowStepSerializer, AuditLogSerializer,
 )
@@ -77,6 +77,13 @@ class DocumentRevisionViewSet(viewsets.ReadOnlyModelViewSet):
 class RiskViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     queryset = Risk.objects.all()
     serializer_class = RiskSerializer
+    permission_classes = [HasTenantRole]
+    allowed_roles = ['admin', 'user']
+
+
+class SupplierViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
+    queryset = Supplier.objects.all()
+    serializer_class = SupplierSerializer
     permission_classes = [HasTenantRole]
     allowed_roles = ['admin', 'user']
 

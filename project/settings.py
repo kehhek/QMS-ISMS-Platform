@@ -155,6 +155,9 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'anon': '20/minute',
         'user': '120/minute',
+        # Public self-service signup: each call provisions a real Postgres
+        # schema, a much heavier operation than a normal anonymous read.
+        'registration': '5/hour',
     },
 }
 

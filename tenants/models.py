@@ -4,7 +4,13 @@ from django_tenants.models import TenantMixin, DomainMixin
 
 
 class Client(TenantMixin):
+    class Plan(models.TextChoices):
+        FREE = 'free', 'Free'
+        TEAM = 'team', 'Team'
+        ENTERPRISE = 'enterprise', 'Enterprise'
+
     name = models.CharField(max_length=100)
+    plan = models.CharField(max_length=20, choices=Plan.choices, default=Plan.FREE)
     paid_until = models.DateField(null=True, blank=True)
     on_trial = models.BooleanField(default=True)
     created_on = models.DateField(auto_now_add=True)

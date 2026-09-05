@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from .models import (
-    Document, DocumentRevision, Risk, Control, Incident, Audit, CorrectiveAction,
+    Document, DocumentRevision, Risk, Supplier, Control, Incident, Audit, CorrectiveAction,
     Evidence, Workflow, WorkflowStep, AuditLog,
 )
 
@@ -35,6 +35,16 @@ class RiskSerializer(serializers.ModelSerializer):
             'treatment_plan', 'target_date', 'residual_likelihood', 'residual_impact', 'created_at',
         )
         read_only_fields = ('created_at',)
+
+
+class SupplierSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Supplier
+        fields = (
+            'id', 'name', 'description', 'contact_name', 'contact_email', 'contact_phone',
+            'website', 'status', 'risks', 'notes', 'created_at', 'updated_at',
+        )
+        read_only_fields = ('created_at', 'updated_at')
 
 
 class ControlSerializer(serializers.ModelSerializer):

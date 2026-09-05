@@ -1,7 +1,11 @@
+from django.conf import settings
+from django.db import connection
+
 from rest_framework.authtoken.models import Token
 from rest_framework.authtoken.views import ObtainAuthToken
 from rest_framework.decorators import api_view, permission_classes, action
-from rest_framework.permissions import IsAdminUser, IsAuthenticated
+from rest_framework.permissions import IsAdminUser, IsAuthenticated, AllowAny
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.response import Response
 from rest_framework import status, viewsets
 from tenants.models import Client, Domain, Membership
@@ -11,7 +15,7 @@ from django.contrib.auth import get_user_model, login, logout, authenticate
 from django.contrib.auth.models import Group
 from core.audit import log_action
 from core.models import AuditLog
-from .serializers import TenantOnboardSerializer, UserSerializer, GroupSerializer
+from .serializers import TenantOnboardSerializer, RegisterSerializer, UserSerializer, GroupSerializer
 from rest_framework.authentication import SessionAuthentication, BasicAuthentication
 from rest_framework.views import APIView
 from rest_framework.decorators import authentication_classes
@@ -24,6 +28,11 @@ def onboard_tenant(request):
     serializer = TenantOnboardSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     data = serializer.validated_data
+
+    # Tenant creation requires the connection to be on the public schema —
+    # force it explicitly rather than depending on this request having
+    # arrived via some specific "platform" domain.
+    connection.set_schema_to_public()
 
     branding_fields = {
         k: data[k] for k in ('logo_url', 'primary_color', 'support_email', 'website') if k in data
@@ -51,6 +60,75 @@ def onboard_tenant(request):
     if password_was_generated:
         response['generated_admin_password'] = password
     return Response(response, status=status.HTTP_201_CREATED)
+
+
+class RegisterView(APIView):
+    """Public self-service signup — the "Get started" flow off the home
+    page's pricing section. Unlike onboard_tenant (platform-admin-only,
+    for provisioning a tenant on someone else's behalf), this creates a
+    brand-new tenant AND its first admin user in one unauthenticated call,
+    then returns a token so the frontend can log the user straight into
+    their new tenant's dashboard.
+
+    authentication_classes = [] for the same reason as the token-obtain
+    view: this must never depend on already having a session, and it's
+    also the entry point that CAN'T be authenticated as anyone yet.
+    Rate-limited harder than general anonymous traffic (a fresh Postgres
+    schema per call is a much heavier operation than a normal API read).
+    """
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'registration'
+
+    def post(self, request):
+        serializer = RegisterSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        slug = data['subdomain']
+        schema_name = f"org_{slug.replace('-', '_')}"
+        domain_name = f'{slug}.localhost'
+
+        # Tenant creation requires the connection to be on the public
+        # schema — force it explicitly rather than depending on which
+        # domain routed this request here (there's no tenant yet for a
+        # brand-new signup, so this can't depend on tenant routing at all).
+        connection.set_schema_to_public()
+
+        client = Client.objects.create(schema_name=schema_name, name=data['org_name'], plan=data['plan'])
+        Domain.objects.create(domain=domain_name, tenant=client, is_primary=True)
+
+        if settings.DEBUG:
+            # Local-dev convenience only, mirroring the same fix used for
+            # the CSRF issue and the frontend proxy: the dev frontend's
+            # proxy always talks to ONE fixed backend host
+            # (host.docker.internal), so re-point that (and bare
+            # localhost) at whichever tenant most recently registered —
+            # otherwise "land on the dashboard" would show someone else's
+            # tenant. A real deployment gives each tenant its own real
+            # subdomain via wildcard DNS and never needs this.
+            for dev_domain in ('host.docker.internal', 'localhost'):
+                Domain.objects.update_or_create(domain=dev_domain, defaults={'tenant': client, 'is_primary': False})
+
+        with schema_context(client.schema_name):
+            User = get_user_model()
+            user = User.objects.create_user(
+                username=data['username'], email=data['email'], password=data['password'],
+                is_superuser=True, is_staff=True,
+            )
+            Membership.objects.create(user=user, tenant=client, role=Membership.Role.ADMIN)
+            token, _ = Token.objects.get_or_create(user=user)
+            log_action(user, AuditLog.Action.LOGIN, user, metadata={'method': 'registration'})
+
+        return Response({
+            'ok': True,
+            'token': token.key,
+            'schema': client.schema_name,
+            'domain': domain_name,
+            'username': user.username,
+        }, status=status.HTTP_201_CREATED)
 
 
 class LoggingObtainAuthToken(ObtainAuthToken):
