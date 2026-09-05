@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { apiFetch, unwrapList } from './api'
+import StatusBadge from './StatusBadge'
 
 export default function IncidentsPanel({ token }) {
   const [incidents, setIncidents] = useState([])
@@ -33,22 +34,20 @@ export default function IncidentsPanel({ token }) {
       .catch((err) => setError(err.message))
   }
 
-  if (!token) return <p>Set a token above to view incidents.</p>
+  if (!token) return <p className="empty-state">Set a token above to view incidents.</p>
 
   return (
     <div>
-      {error && <p style={{ color: 'crimson' }}>{error}</p>}
-      <form onSubmit={createIncident} style={{ marginBottom: 16 }}>
+      {error && <p className="error-text">{error}</p>}
+      <form onSubmit={createIncident} className="toolbar">
         <input
           placeholder="Title"
           value={form.title}
           onChange={(e) => setForm({ ...form, title: e.target.value })}
-          style={{ marginRight: 8 }}
         />
         <select
           value={form.severity}
           onChange={(e) => setForm({ ...form, severity: e.target.value })}
-          style={{ marginRight: 8 }}
         >
           <option value="low">Low</option>
           <option value="medium">Medium</option>
@@ -58,37 +57,40 @@ export default function IncidentsPanel({ token }) {
         <select
           value={form.related_risk}
           onChange={(e) => setForm({ ...form, related_risk: e.target.value })}
-          style={{ marginRight: 8 }}
         >
           <option value="">No related risk</option>
           {risks.map((r) => (
             <option key={r.id} value={r.id}>{r.name}</option>
           ))}
         </select>
-        <button type="submit">Report Incident</button>
+        <button type="submit" className="btn-primary">Report Incident</button>
       </form>
-      <table border="1" cellPadding="6" style={{ borderCollapse: 'collapse', width: '100%' }}>
-        <thead>
-          <tr>
-            <th>Title</th>
-            <th>Severity</th>
-            <th>Status</th>
-            <th>Related Risk</th>
-            <th>Reported By</th>
-          </tr>
-        </thead>
-        <tbody>
-          {incidents.map((i) => (
-            <tr key={i.id}>
-              <td>{i.title}</td>
-              <td>{i.severity}</td>
-              <td>{i.status}</td>
-              <td>{risks.find((r) => r.id === i.related_risk)?.name || '—'}</td>
-              <td>{i.reported_by_username || '—'}</td>
+      {incidents.length === 0 ? (
+        <p className="empty-state">No incidents reported.</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Severity</th>
+              <th>Status</th>
+              <th>Related Risk</th>
+              <th>Reported By</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {incidents.map((i) => (
+              <tr key={i.id}>
+                <td>{i.title}</td>
+                <td><StatusBadge value={i.severity} /></td>
+                <td><StatusBadge value={i.status} /></td>
+                <td>{risks.find((r) => r.id === i.related_risk)?.name || '—'}</td>
+                <td>{i.reported_by_username || '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   )
 }

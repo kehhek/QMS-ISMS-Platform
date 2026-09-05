@@ -29,27 +29,21 @@ export default function LoginForm({ onLogin }) {
   }
 
   return (
-    <form onSubmit={submit} style={{ maxWidth: 320 }}>
-      <h2>Log in</h2>
-      {error && <p style={{ color: 'crimson' }}>{error}</p>}
-      <div style={{ marginBottom: 8 }}>
-        <input
-          placeholder="Username"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          style={{ width: '100%', boxSizing: 'border-box' }}
-          autoFocus
-        />
-      </div>
-      <div style={{ marginBottom: 8 }}>
-        <input
-          placeholder="Password"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          style={{ width: '100%', boxSizing: 'border-box' }}
-        />
-      </div>
+    <form onSubmit={submit}>
+      <h2>QMS/ISMS Console</h2>
+      {error && <p className="error-text">{error}</p>}
+      <input
+        placeholder="Username"
+        value={username}
+        onChange={(e) => setUsername(e.target.value)}
+        autoFocus
+      />
+      <input
+        placeholder="Password"
+        type="password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+      />
       <button type="submit" disabled={submitting}>{submitting ? 'Logging in…' : 'Log in'}</button>
     </form>
   )

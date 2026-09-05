@@ -74,26 +74,24 @@ export default function EvidencePanel({ token }) {
       .catch((err) => setError(err.message))
   }
 
-  if (!token) return <p>Set a token above to view evidence.</p>
+  if (!token) return <p className="empty-state">Set a token above to view evidence.</p>
 
   return (
     <div>
-      {error && <p style={{ color: 'crimson' }}>{error}</p>}
-      <p style={{ fontSize: 12, color: '#666' }}>
+      {error && <p className="error-text">{error}</p>}
+      <p className="panel-hint">
         Files are encrypted at rest. "Attach to" + ID identifies the record this is evidence for
         (e.g. pick "incident" and the incident's numeric id from its own tab).
       </p>
-      <form onSubmit={upload} style={{ marginBottom: 16 }}>
+      <form onSubmit={upload} className="toolbar">
         <input
           placeholder="Title"
           value={form.title}
           onChange={(e) => setForm({ ...form, title: e.target.value })}
-          style={{ marginRight: 8 }}
         />
         <select
           value={form.content_type}
           onChange={(e) => setForm({ ...form, content_type: e.target.value })}
-          style={{ marginRight: 8 }}
         >
           {contentTypes.map((ct) => (
             <option key={ct.id} value={ct.id}>{ct.model}</option>
@@ -104,33 +102,37 @@ export default function EvidencePanel({ token }) {
           type="number"
           value={form.object_id}
           onChange={(e) => setForm({ ...form, object_id: e.target.value })}
-          style={{ width: 90, marginRight: 8 }}
+          style={{ width: 90 }}
         />
-        <input type="file" onChange={(e) => setFile(e.target.files[0])} style={{ marginRight: 8 }} />
-        <button type="submit">Upload</button>
+        <input type="file" onChange={(e) => setFile(e.target.files[0])} />
+        <button type="submit" className="btn-primary">Upload</button>
       </form>
-      <table border="1" cellPadding="6" style={{ borderCollapse: 'collapse', width: '100%' }}>
-        <thead>
-          <tr>
-            <th>Title</th>
-            <th>Attached To</th>
-            <th>Uploaded By</th>
-            <th>Uploaded At</th>
-            <th>File</th>
-          </tr>
-        </thead>
-        <tbody>
-          {evidence.map((ev) => (
-            <tr key={ev.id}>
-              <td>{ev.title}</td>
-              <td>{ev.content_type_name} #{ev.object_id}</td>
-              <td>{ev.uploaded_by_username || '—'}</td>
-              <td>{new Date(ev.uploaded_at).toLocaleString()}</td>
-              <td><button onClick={() => download(ev)}>Download</button></td>
+      {evidence.length === 0 ? (
+        <p className="empty-state">No evidence uploaded yet.</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Attached To</th>
+              <th>Uploaded By</th>
+              <th>Uploaded At</th>
+              <th>File</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {evidence.map((ev) => (
+              <tr key={ev.id}>
+                <td>{ev.title}</td>
+                <td>{ev.content_type_name} #{ev.object_id}</td>
+                <td>{ev.uploaded_by_username || '—'}</td>
+                <td>{new Date(ev.uploaded_at).toLocaleString()}</td>
+                <td><button onClick={() => download(ev)}>Download</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   )
 }

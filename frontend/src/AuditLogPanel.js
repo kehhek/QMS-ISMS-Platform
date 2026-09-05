@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { apiFetch, apiFetchUrl, unwrapList } from './api'
+import StatusBadge from './StatusBadge'
 
 export default function AuditLogPanel({ token }) {
   const [page, setPage] = useState(null)
@@ -15,40 +16,44 @@ export default function AuditLogPanel({ token }) {
     // eslint-disable-next-line
   }, [token])
 
-  if (!token) return <p>Set a token above to view the audit log.</p>
-  if (error) return <p style={{ color: 'crimson' }}>{error}</p>
-  if (!page) return <p>Loading…</p>
+  if (!token) return <p className="empty-state">Set a token above to view the audit log.</p>
+  if (error) return <p className="error-text">{error}</p>
+  if (!page) return <p className="empty-state">Loading…</p>
 
   const entries = unwrapList(page)
 
   return (
     <div>
-      <p style={{ fontSize: 12, color: '#666' }}>
+      <p className="panel-hint">
         Visible to admin/auditor roles only. Entries are append-only — nothing here can be edited or deleted.
       </p>
-      <table border="1" cellPadding="6" style={{ borderCollapse: 'collapse', width: '100%' }}>
-        <thead>
-          <tr>
-            <th>When</th>
-            <th>Actor</th>
-            <th>Action</th>
-            <th>Target</th>
-          </tr>
-        </thead>
-        <tbody>
-          {entries.map((e) => (
-            <tr key={e.id}>
-              <td>{new Date(e.created_at).toLocaleString()}</td>
-              <td>{e.actor_username || 'system'}</td>
-              <td>{e.action}</td>
-              <td>{e.content_type_name} — {e.target_repr}</td>
+      {entries.length === 0 ? (
+        <p className="empty-state">No activity logged yet.</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>Actor</th>
+              <th>Action</th>
+              <th>Target</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-      <div style={{ marginTop: 12 }}>
+          </thead>
+          <tbody>
+            {entries.map((e) => (
+              <tr key={e.id}>
+                <td>{new Date(e.created_at).toLocaleString()}</td>
+                <td>{e.actor_username || 'system'}</td>
+                <td><StatusBadge value={e.action} /></td>
+                <td>{e.content_type_name} — {e.target_repr}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <div className="pagination">
         <button disabled={!page.previous} onClick={() => load(page.previous)}>Previous</button>
-        <span style={{ margin: '0 8px' }}>{entries.length ? `showing ${entries.length} of ${page.count}` : ''}</span>
+        <span>{entries.length ? `showing ${entries.length} of ${page.count}` : ''}</span>
         <button disabled={!page.next} onClick={() => load(page.next)}>Next</button>
       </div>
     </div>

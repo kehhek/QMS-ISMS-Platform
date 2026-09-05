@@ -17,23 +17,35 @@ export default function RoleManager({ token }) {
       .catch(() => setUsers([]))
   }, [token])
 
-  if (!token) return <p>Set a token above to view roles and users.</p>
+  if (!token) return <p className="empty-state">Set a token above to view roles and users.</p>
 
   return (
-    <div>
-      <h2>Groups</h2>
-      <ul>
-        {groups.map((g) => (
-          <li key={g.id}>{g.name}</li>
-        ))}
-      </ul>
+    <div style={{ display: 'flex', gap: 40 }}>
+      <div>
+        <h3>Groups</h3>
+        {groups.length === 0 ? (
+          <p className="empty-state">None</p>
+        ) : (
+          <ul>
+            {groups.map((g) => (
+              <li key={g.id}>{g.name}</li>
+            ))}
+          </ul>
+        )}
+      </div>
 
-      <h2>Users</h2>
-      <ul>
-        {users.map((u) => (
-          <li key={u.id}>{u.username} ({u.email})</li>
-        ))}
-      </ul>
+      <div>
+        <h3>Users</h3>
+        {users.length === 0 ? (
+          <p className="empty-state">None</p>
+        ) : (
+          <ul>
+            {users.map((u) => (
+              <li key={u.id}>{u.username} ({u.email})</li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   )
 }

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { apiFetch, unwrapList } from './api'
+import StatusBadge from './StatusBadge'
 
 export default function CorrectiveActionsPanel({ token }) {
   const [actions, setActions] = useState([])
@@ -14,6 +15,7 @@ export default function CorrectiveActionsPanel({ token }) {
 
   useEffect(() => {
     if (token) load()
+    // eslint-disable-next-line
   }, [token])
 
   const createAction = (e) => {
@@ -27,54 +29,56 @@ export default function CorrectiveActionsPanel({ token }) {
       .catch((err) => setError(err.message))
   }
 
-  if (!token) return <p>Set a token above to view corrective actions.</p>
+  if (!token) return <p className="empty-state">Set a token above to view corrective actions.</p>
 
   return (
     <div>
-      {error && <p style={{ color: 'crimson' }}>{error}</p>}
-      <form onSubmit={createAction} style={{ marginBottom: 16 }}>
+      {error && <p className="error-text">{error}</p>}
+      <form onSubmit={createAction} className="toolbar">
         <input
           placeholder="Title"
           value={form.title}
           onChange={(e) => setForm({ ...form, title: e.target.value })}
-          style={{ marginRight: 8 }}
         />
         <select
           value={form.action_type}
           onChange={(e) => setForm({ ...form, action_type: e.target.value })}
-          style={{ marginRight: 8 }}
         >
           <option value="corrective">Corrective</option>
           <option value="preventive">Preventive</option>
         </select>
-        <button type="submit">Add CAPA</button>
+        <button type="submit" className="btn-primary">Add CAPA</button>
       </form>
-      <table border="1" cellPadding="6" style={{ borderCollapse: 'collapse', width: '100%' }}>
-        <thead>
-          <tr>
-            <th>Title</th>
-            <th>Type</th>
-            <th>Status</th>
-            <th>Owner</th>
-            <th>Audit</th>
-            <th>Risk</th>
-            <th>Due</th>
-          </tr>
-        </thead>
-        <tbody>
-          {actions.map((a) => (
-            <tr key={a.id}>
-              <td>{a.title}</td>
-              <td>{a.action_type}</td>
-              <td>{a.status}</td>
-              <td>{a.owner || '—'}</td>
-              <td>{a.audit ?? '—'}</td>
-              <td>{a.risk ?? '—'}</td>
-              <td>{a.due_date || '—'}</td>
+      {actions.length === 0 ? (
+        <p className="empty-state">No corrective actions yet.</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Type</th>
+              <th>Status</th>
+              <th>Owner</th>
+              <th>Audit</th>
+              <th>Risk</th>
+              <th>Due</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {actions.map((a) => (
+              <tr key={a.id}>
+                <td>{a.title}</td>
+                <td>{a.action_type}</td>
+                <td><StatusBadge value={a.status} /></td>
+                <td>{a.owner || '—'}</td>
+                <td>{a.audit ?? '—'}</td>
+                <td>{a.risk ?? '—'}</td>
+                <td>{a.due_date || '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   )
 }

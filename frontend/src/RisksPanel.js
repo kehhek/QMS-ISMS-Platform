@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { apiFetch, unwrapList } from './api'
+import StatusBadge from './StatusBadge'
 
 export default function RisksPanel({ token }) {
   const [risks, setRisks] = useState([])
@@ -14,6 +15,7 @@ export default function RisksPanel({ token }) {
 
   useEffect(() => {
     if (token) load()
+    // eslint-disable-next-line
   }, [token])
 
   const createRisk = (e) => {
@@ -27,17 +29,16 @@ export default function RisksPanel({ token }) {
       .catch((err) => setError(err.message))
   }
 
-  if (!token) return <p>Set a token above to view risks.</p>
+  if (!token) return <p className="empty-state">Set a token above to view risks.</p>
 
   return (
     <div>
-      {error && <p style={{ color: 'crimson' }}>{error}</p>}
-      <form onSubmit={createRisk} style={{ marginBottom: 16 }}>
+      {error && <p className="error-text">{error}</p>}
+      <form onSubmit={createRisk} className="toolbar">
         <input
           placeholder="Name"
           value={form.name}
           onChange={(e) => setForm({ ...form, name: e.target.value })}
-          style={{ marginRight: 8 }}
         />
         <input
           type="number"
@@ -45,7 +46,7 @@ export default function RisksPanel({ token }) {
           max="5"
           value={form.likelihood}
           onChange={(e) => setForm({ ...form, likelihood: Number(e.target.value) })}
-          style={{ width: 60, marginRight: 8 }}
+          style={{ width: 60 }}
           title="Likelihood"
         />
         <input
@@ -54,35 +55,39 @@ export default function RisksPanel({ token }) {
           max="5"
           value={form.impact}
           onChange={(e) => setForm({ ...form, impact: Number(e.target.value) })}
-          style={{ width: 60, marginRight: 8 }}
+          style={{ width: 60 }}
           title="Impact"
         />
-        <button type="submit">Add Risk</button>
+        <button type="submit" className="btn-primary">Add Risk</button>
       </form>
-      <table border="1" cellPadding="6" style={{ borderCollapse: 'collapse', width: '100%' }}>
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Status</th>
-            <th>Likelihood</th>
-            <th>Impact</th>
-            <th>Owner</th>
-            <th>Target date</th>
-          </tr>
-        </thead>
-        <tbody>
-          {risks.map((r) => (
-            <tr key={r.id}>
-              <td>{r.name}</td>
-              <td>{r.status}</td>
-              <td>{r.likelihood}</td>
-              <td>{r.impact}</td>
-              <td>{r.owner || '—'}</td>
-              <td>{r.target_date || '—'}</td>
+      {risks.length === 0 ? (
+        <p className="empty-state">No risks yet.</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Status</th>
+              <th>Likelihood</th>
+              <th>Impact</th>
+              <th>Owner</th>
+              <th>Target date</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {risks.map((r) => (
+              <tr key={r.id}>
+                <td>{r.name}</td>
+                <td><StatusBadge value={r.status} /></td>
+                <td>{r.likelihood}</td>
+                <td>{r.impact}</td>
+                <td>{r.owner || '—'}</td>
+                <td>{r.target_date || '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   )
 }

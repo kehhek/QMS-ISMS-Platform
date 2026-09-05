@@ -14,6 +14,7 @@ export default function TenantSettingsPanel({ token }) {
 
   useEffect(() => {
     if (token) load()
+    // eslint-disable-next-line
   }, [token])
 
   const save = (e) => {
@@ -32,32 +33,36 @@ export default function TenantSettingsPanel({ token }) {
       .catch((err) => setError(err.message))
   }
 
-  if (!token) return <p>Set a token above to view org settings.</p>
-  if (error) return <p style={{ color: 'crimson' }}>{error}</p>
-  if (!settings) return <p>Loading…</p>
+  if (!token) return <p className="empty-state">Set a token above to view org settings.</p>
+  if (error) return <p className="error-text">{error}</p>
+  if (!settings) return <p className="empty-state">Loading…</p>
 
   const field = (label, key, type = 'text') => (
-    <div style={{ marginBottom: 10 }}>
-      <label style={{ display: 'inline-block', width: 140 }}>{label}</label>
+    <div style={{ marginBottom: 12 }}>
+      <label style={{ display: 'block', marginBottom: 4, fontSize: 13, color: 'var(--color-text-muted)' }}>
+        {label}
+      </label>
       <input
         type={type}
         value={settings[key] || ''}
         onChange={(e) => setSettings({ ...settings, [key]: e.target.value })}
-        style={{ width: 300 }}
+        style={{ width: 320 }}
       />
     </div>
   )
 
   return (
-    <form onSubmit={save}>
-      <p style={{ fontSize: 12, color: '#666' }}>Schema: {settings.schema_name}</p>
+    <form onSubmit={save} style={{ maxWidth: 360 }}>
+      <p className="panel-hint">Schema: {settings.schema_name}</p>
       {field('Org name', 'name')}
       {field('Logo URL', 'logo_url')}
       {field('Primary color', 'primary_color')}
       {field('Support email', 'support_email', 'email')}
       {field('Website', 'website')}
-      <button type="submit">Save</button>
-      {saved && <span style={{ marginLeft: 8, color: 'green' }}>Saved</span>}
+      <div className="toolbar">
+        <button type="submit" className="btn-primary">Save</button>
+        {saved && <span className="success-text">Saved</span>}
+      </div>
     </form>
   )
 }

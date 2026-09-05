@@ -66,37 +66,38 @@ export default function App() {
 
   const ActiveComponent = TABS.find((t) => t.key === activeKey).Component
 
+  if (!token) {
+    return (
+      <div className="auth-screen">
+        <div className="auth-card">
+          <LoginForm onLogin={handleLogin} />
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div style={{ padding: 20, fontFamily: 'sans-serif' }}>
-      <h1>QMS/ISMS Console</h1>
+    <div className="app-shell">
+      <div className="app-header">
+        <h1>QMS/ISMS Console</h1>
+        <button onClick={handleLogout}>Log out</button>
+      </div>
 
-      {!token ? (
-        <LoginForm onLogin={handleLogin} />
-      ) : (
-        <>
-          <div style={{ marginBottom: 16 }}>
-            <button onClick={handleLogout}>Log out</button>
-          </div>
+      <nav className="tabs">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            className={`tab${activeKey === t.key ? ' active' : ''}`}
+            onClick={() => setActiveKey(t.key)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </nav>
 
-          <nav style={{ marginBottom: 16, borderBottom: '1px solid #ccc', paddingBottom: 8 }}>
-            {TABS.map((t) => (
-              <button
-                key={t.key}
-                onClick={() => setActiveKey(t.key)}
-                style={{
-                  fontWeight: activeKey === t.key ? 'bold' : 'normal',
-                  marginRight: 8,
-                  textDecoration: activeKey === t.key ? 'underline' : 'none',
-                }}
-              >
-                {t.label}
-              </button>
-            ))}
-          </nav>
-
-          <ActiveComponent token={token} />
-        </>
-      )}
+      <div className="panel">
+        <ActiveComponent token={token} />
+      </div>
     </div>
   )
 }

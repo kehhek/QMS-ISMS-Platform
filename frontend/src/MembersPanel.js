@@ -15,6 +15,7 @@ export default function MembersPanel({ token }) {
 
   useEffect(() => {
     if (token) load()
+    // eslint-disable-next-line
   }, [token])
 
   const invite = (e) => {
@@ -30,63 +31,63 @@ export default function MembersPanel({ token }) {
       .catch((err) => setError(err.message))
   }
 
-  if (!token) return <p>Set a token above to view members.</p>
+  if (!token) return <p className="empty-state">Set a token above to view members.</p>
 
   return (
     <div>
-      {error && <p style={{ color: 'crimson' }}>{error}</p>}
+      {error && <p className="error-text">{error}</p>}
       {lastGeneratedPassword && (
-        <p style={{ background: '#fffbcc', padding: 8 }}>
+        <p className="notice-box">
           New user created — generated password (shown once): <code>{lastGeneratedPassword}</code>
         </p>
       )}
-      <p style={{ fontSize: 12, color: '#666' }}>
-        Adding a member requires the "admin" role in this tenant (or superuser).
-      </p>
-      <form onSubmit={invite} style={{ marginBottom: 16 }}>
+      <p className="panel-hint">Adding a member requires the "admin" role in this tenant (or superuser).</p>
+      <form onSubmit={invite} className="toolbar">
         <input
           placeholder="Username"
           value={form.username}
           onChange={(e) => setForm({ ...form, username: e.target.value })}
-          style={{ marginRight: 8 }}
         />
         <input
           placeholder="Email (only used if creating a new user)"
           value={form.email}
           onChange={(e) => setForm({ ...form, email: e.target.value })}
-          style={{ marginRight: 8, width: 260 }}
+          style={{ width: 260 }}
         />
         <select
           value={form.role}
           onChange={(e) => setForm({ ...form, role: e.target.value })}
-          style={{ marginRight: 8 }}
         >
           <option value="admin">Admin</option>
           <option value="auditor">Auditor</option>
           <option value="user">User</option>
         </select>
-        <button type="submit">Add / Update Member</button>
+        <button type="submit" className="btn-primary">Add / Update Member</button>
       </form>
-      <table border="1" cellPadding="6" style={{ borderCollapse: 'collapse', width: '100%' }}>
-        <thead>
-          <tr>
-            <th>Username</th>
-            <th>Email</th>
-            <th>Role</th>
-            <th>Since</th>
-          </tr>
-        </thead>
-        <tbody>
-          {members.map((m) => (
-            <tr key={m.id}>
-              <td>{m.username}</td>
-              <td>{m.email}</td>
-              <td>{m.role}</td>
-              <td>{new Date(m.created_at).toLocaleDateString()}</td>
+      {members.length === 0 ? (
+        <p className="empty-state">No members yet.</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Username</th>
+              <th>Email</th>
+              <th>Role</th>
+              <th>Since</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {members.map((m) => (
+              <tr key={m.id}>
+                <td>{m.username}</td>
+                <td>{m.email}</td>
+                <td><span className="badge badge-neutral">{m.role}</span></td>
+                <td>{new Date(m.created_at).toLocaleDateString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   )
 }
