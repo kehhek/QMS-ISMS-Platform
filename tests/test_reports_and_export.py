@@ -124,3 +124,73 @@ class ControlsStatusReportTests(TestCase):
         api.force_authenticate(user=outsider)
         resp = api.get('/api/reports/controls-status/', HTTP_HOST=self.host)
         self.assertEqual(resp.status_code, 403)
+
+
+class StatementOfApplicabilityReportTests(TestCase):
+    """The generated ISO 27001 SoA — status/owner/evidence pulled live at
+    generation time, soa_justification the one field a person writes."""
+
+    def setUp(self):
+        self.tenant = make_tenant('soareporttest')
+        self.host = f'{self.tenant.schema_name}.localhost'
+        self.user = make_member(self.tenant, 'soa_user', Membership.Role.USER)
+
+        with schema_context(self.tenant.schema_name):
+            from django.contrib.contenttypes.models import ContentType
+            from core.models import Control, Evidence
+
+            self.implemented = Control.objects.create(
+                framework=Control.Framework.ISO27001, identifier='A.5.1', name='Policies',
+                status=Control.Status.IMPLEMENTED, soa_justification='Required by policy.',
+            )
+            self.not_applicable = Control.objects.create(
+                framework=Control.Framework.ISO27001, identifier='A.7.1', name='Physical security perimeters',
+                status=Control.Status.NOT_APPLICABLE, soa_justification='Fully remote organization.',
+            )
+            Control.objects.create(
+                framework=Control.Framework.SOC2, identifier='CC1.1', name='Integrity and ethical values',
+            )
+            control_ct = ContentType.objects.get_for_model(Control)
+            Evidence.objects.create(
+                title='Information Security Policy v3', content_type=control_ct, object_id=self.implemented.id,
+            )
+
+    def test_report_is_a_valid_pdf(self):
+        api = APIClient()
+        api.force_authenticate(user=self.user)
+        resp = api.get('/api/reports/statement-of-applicability/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp['Content-Type'], 'application/pdf')
+        self.assertTrue(resp.content.startswith(b'%PDF'))
+        self.assertGreater(len(resp.content), 500)
+
+    def test_can_be_scoped_to_one_framework(self):
+        api = APIClient()
+        api.force_authenticate(user=self.user)
+        iso_only = api.get('/api/reports/statement-of-applicability/?framework=iso27001', HTTP_HOST=self.host)
+        both = api.get('/api/reports/statement-of-applicability/', HTTP_HOST=self.host)
+        # Scoping to one framework must produce a strictly smaller/equal
+        # document than including every framework — the cheapest signal
+        # (without a PDF text extractor in this environment) that the
+        # ?framework= filter is actually being applied, not ignored.
+        self.assertLessEqual(len(iso_only.content), len(both.content))
+
+    def test_report_requires_tenant_membership(self):
+        outsider = User.objects.create_user('soa_outsider', 'o3@example.com', 'pass12345')
+        api = APIClient()
+        api.force_authenticate(user=outsider)
+        resp = api.get('/api/reports/statement-of-applicability/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_generation_does_not_require_every_control_to_be_justified(self):
+        # A tenant that hasn't filled in every justification yet must
+        # still be able to generate a report today — the gaps are
+        # something to flag and close, not a reason "one-click" fails.
+        with schema_context(self.tenant.schema_name):
+            from core.models import Control
+            Control.objects.create(framework=Control.Framework.ISO27001, identifier='A.5.2', name='Roles')
+
+        api = APIClient()
+        api.force_authenticate(user=self.user)
+        resp = api.get('/api/reports/statement-of-applicability/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200)

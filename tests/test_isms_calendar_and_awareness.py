@@ -458,3 +458,216 @@ class DemoRequestTests(TestCase):
         resp = api.post('/api/accounts/demo-request/', {'name': 'No Email'}, format='json', HTTP_HOST=self.PLATFORM_HOST)
         self.assertEqual(resp.status_code, 400)
         self.assertIn('email', resp.data)
+
+
+class TrainingQuizAndTeamCompletionTests(TestCase):
+    """Quiz-gated video completion (auto-fail -> reassign) and per-team
+    completion/streak tracking — the "make people actually watch it"
+    engagement layer on top of plain video assignment."""
+
+    def setUp(self):
+        self.tenant = make_tenant('quizengagementtest')
+        self.host = f'{self.tenant.schema_name}.localhost'
+        self.admin = make_member(self.tenant, 'quiz_admin', Membership.Role.ADMIN)
+        self.trainee = make_member(self.tenant, 'quiz_trainee', Membership.Role.USER)
+
+        self.api = APIClient()
+        self.api.force_authenticate(user=self.admin)
+
+    def _upload_video(self, pass_percent=80):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        resp = self.api.post(
+            '/api/training-videos/',
+            {
+                'title': 'Phishing Awareness', 'pass_percent': pass_percent,
+                'file': SimpleUploadedFile('video.mp4', b'fake mp4', content_type='video/mp4'),
+            },
+            format='multipart', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 201, resp.data)
+        return resp.data
+
+    def _add_question(self, video_id, correct_index=1):
+        resp = self.api.post(
+            '/api/quiz-questions/',
+            {
+                'video': video_id, 'order': 0, 'text': 'What do you do with a suspicious email?',
+                'options': ['Click it', 'Report it', 'Ignore it'], 'correct_index': correct_index,
+            },
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 201, resp.data)
+        return resp.data
+
+    def _publish_and_get_record_id(self, video_id):
+        self.api.post(f'/api/training-videos/{video_id}/publish/', HTTP_HOST=self.host)
+        listing = self.api.get(f'/api/training-records/?video={video_id}', HTTP_HOST=self.host)
+        return next(r['id'] for r in listing.data['results'] if r['username'] == 'quiz_trainee')
+
+    def test_trainee_facing_quiz_never_exposes_the_correct_answer(self):
+        video = self._upload_video()
+        self._add_question(video['id'], correct_index=1)
+
+        trainee_api = APIClient()
+        trainee_api.force_authenticate(user=self.trainee)
+        resp = trainee_api.get(f'/api/training-videos/{video["id"]}/quiz/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotIn('correct_index', resp.data[0])
+
+    def test_plain_user_cannot_read_the_answer_key_endpoint(self):
+        video = self._upload_video()
+        self._add_question(video['id'])
+
+        trainee_api = APIClient()
+        trainee_api.force_authenticate(user=self.trainee)
+        resp = trainee_api.get(f'/api/quiz-questions/?video={video["id"]}', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_failing_the_quiz_reassigns_instead_of_completing(self):
+        video = self._upload_video(pass_percent=100)
+        self._add_question(video['id'], correct_index=1)
+        record_id = self._publish_and_get_record_id(video['id'])
+
+        trainee_api = APIClient()
+        trainee_api.force_authenticate(user=self.trainee)
+        resp = trainee_api.post(
+            f'/api/training-records/{record_id}/submit-quiz/', {'answers': [0]},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertFalse(resp.data['passed'])
+        self.assertEqual(resp.data['status'], 'assigned')
+        self.assertEqual(resp.data['quiz_score'], 0)
+        self.assertEqual(resp.data['quiz_attempts'], 1)
+
+    def test_passing_the_quiz_completes_the_assignment(self):
+        video = self._upload_video(pass_percent=100)
+        self._add_question(video['id'], correct_index=1)
+        record_id = self._publish_and_get_record_id(video['id'])
+
+        trainee_api = APIClient()
+        trainee_api.force_authenticate(user=self.trainee)
+        resp = trainee_api.post(
+            f'/api/training-records/{record_id}/submit-quiz/', {'answers': [1]},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertTrue(resp.data['passed'])
+        self.assertEqual(resp.data['status'], 'completed')
+        self.assertEqual(resp.data['quiz_score'], 100)
+        self.assertIsNotNone(resp.data['completed_date'])
+
+    def test_wrong_answer_count_is_rejected(self):
+        video = self._upload_video()
+        self._add_question(video['id'])
+        record_id = self._publish_and_get_record_id(video['id'])
+
+        trainee_api = APIClient()
+        trainee_api.force_authenticate(user=self.trainee)
+        resp = trainee_api.post(
+            f'/api/training-records/{record_id}/submit-quiz/', {'answers': [0, 1]},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_video_with_no_quiz_has_nothing_to_submit(self):
+        video = self._upload_video()  # no questions added
+        record_id = self._publish_and_get_record_id(video['id'])
+
+        trainee_api = APIClient()
+        trainee_api.force_authenticate(user=self.trainee)
+        resp = trainee_api.post(
+            f'/api/training-records/{record_id}/submit-quiz/', {'answers': []},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_cannot_submit_someone_elses_quiz(self):
+        video = self._upload_video()
+        self._add_question(video['id'])
+        record_id = self._publish_and_get_record_id(video['id'])
+
+        other = make_member(self.tenant, 'quiz_other', Membership.Role.USER)
+        other_api = APIClient()
+        other_api.force_authenticate(user=other)
+        resp = other_api.post(
+            f'/api/training-records/{record_id}/submit-quiz/', {'answers': [1]},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_team_completion_is_scoped_to_the_current_tenant_only(self):
+        # Regression test for a real cross-tenant leak caught during
+        # manual verification: UserGroup is a SHARED_APP model (tenants
+        # app) — every tenant's groups live in one physical table,
+        # distinguished only by `tenant`. team_completion() must filter
+        # by the current tenant, or it leaks every other tenant's team
+        # names and rosters into the response.
+        other_tenant = make_tenant('quizengagementother')
+        with schema_context(other_tenant.schema_name):
+            from tenants.models import UserGroup
+            UserGroup.objects.create(tenant=other_tenant, name='Should Not Appear')
+
+        with schema_context(self.tenant.schema_name):
+            from tenants.models import UserGroup
+            group = UserGroup.objects.create(tenant=self.tenant, name='Engineering')
+            group.members.create(user=self.trainee)
+
+        video = self._upload_video()
+        self._publish_and_get_record_id(video['id'])
+
+        resp = self.api.get(f'/api/training-videos/{video["id"]}/team-completion/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        group_names = {t['group_name'] for t in resp.data}
+        self.assertEqual(group_names, {'Engineering'})
+
+    def test_team_completion_reports_percent_and_fully_trained_badge(self):
+        with schema_context(self.tenant.schema_name):
+            from tenants.models import UserGroup
+            group = UserGroup.objects.create(tenant=self.tenant, name='Engineering')
+            group.members.create(user=self.trainee)
+
+        video = self._upload_video(pass_percent=100)
+        self._add_question(video['id'], correct_index=1)
+        record_id = self._publish_and_get_record_id(video['id'])
+
+        trainee_api = APIClient()
+        trainee_api.force_authenticate(user=self.trainee)
+        trainee_api.post(
+            f'/api/training-records/{record_id}/submit-quiz/', {'answers': [1]},
+            format='json', HTTP_HOST=self.host,
+        )
+
+        resp = self.api.get(f'/api/training-videos/{video["id"]}/team-completion/', HTTP_HOST=self.host)
+        team = resp.data[0]
+        self.assertEqual(team['percent'], 100)
+        self.assertTrue(team['fully_trained'])
+        self.assertEqual(team['members'][0]['streak'], 1)
+
+    def test_streak_breaks_on_the_most_recent_incomplete_video(self):
+        with schema_context(self.tenant.schema_name):
+            from tenants.models import UserGroup
+            group = UserGroup.objects.create(tenant=self.tenant, name='Engineering')
+            group.members.create(user=self.trainee)
+
+        video1 = self._upload_video()
+        self._publish_and_get_record_id(video1['id'])
+        trainee_api = APIClient()
+        trainee_api.force_authenticate(user=self.trainee)
+
+        with schema_context(self.tenant.schema_name):
+            from core.models import TrainingRecord
+            record1 = TrainingRecord.objects.get(video_id=video1['id'], user=self.trainee)
+            record1.status = 'completed'
+            record1.save()
+
+        # A second, newer video the trainee has NOT completed — the
+        # streak (counted from the newest video backward) must be 0,
+        # not 1, even though the older video was completed.
+        video2 = self._upload_video()
+        self._publish_and_get_record_id(video2['id'])
+
+        resp = self.api.get(f'/api/training-videos/{video2["id"]}/team-completion/', HTTP_HOST=self.host)
+        member = resp.data[0]['members'][0]
+        self.assertEqual(member['streak'], 0)

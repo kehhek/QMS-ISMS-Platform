@@ -69,6 +69,20 @@ def _get_legacy_fernet():
     return Fernet(key) if key else None
 
 
+def encrypt_text(plaintext):
+    """Encrypts a short string (e.g. a third-party API credential for
+    Integration.encrypted_credentials) with the same per-tenant derived
+    key as evidence files — a compromised key for one tenant doesn't
+    help decrypt another's, and a credential is at least as sensitive as
+    a file, so it gets the same protection rather than a separate,
+    weaker scheme."""
+    return _get_fernet().encrypt(plaintext.encode()).decode()
+
+
+def decrypt_text(ciphertext):
+    return _get_fernet().decrypt(ciphertext.encode()).decode()
+
+
 class EncryptedStorageMixin:
     """The encrypt-on-save / decrypt-on-open behavior, independent of
     where bytes actually end up (local disk vs. S3) — mixed into a real

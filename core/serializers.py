@@ -3,7 +3,7 @@ from rest_framework import serializers
 from .models import (
     Document, DocumentRevision, Risk, Supplier, SupplierQuestionnaire, SupplierAgreement, Control,
     Incident, Audit, CorrectiveAction, Evidence, Workflow, WorkflowStep, AuditLog, ElectronicSignature,
-    TrainingRecord, TrainingVideo,
+    TrainingRecord, TrainingVideo, QuizQuestion, AuditorAccess, Integration, IntegrationCheckResult,
     Asset, AssetReview, Nonconformance, ApprovalMatrixRule, ApprovalRecord, CalendarEvent,
 )
 
@@ -180,7 +180,7 @@ class ControlSerializer(serializers.ModelSerializer):
         model = Control
         fields = (
             'id', 'framework', 'identifier', 'name', 'description', 'status', 'owner',
-            'risks', 'created_at', 'updated_at',
+            'soa_justification', 'risks', 'created_at', 'updated_at',
         )
         read_only_fields = ('created_at', 'updated_at')
 
@@ -291,6 +291,25 @@ class EvidenceSerializer(serializers.ModelSerializer):
         return data
 
 
+class QuizQuestionSerializer(serializers.ModelSerializer):
+    """Full serializer, correct_index included — for admin/auditor
+    management only. See QuizQuestionPublicSerializer for what a trainee
+    taking the quiz actually receives."""
+
+    class Meta:
+        model = QuizQuestion
+        fields = ('id', 'video', 'order', 'text', 'options', 'correct_index')
+
+
+class QuizQuestionPublicSerializer(serializers.ModelSerializer):
+    """What a trainee taking the quiz sees — no correct_index, so the
+    answer can't be read out of the API response before they submit."""
+
+    class Meta:
+        model = QuizQuestion
+        fields = ('id', 'order', 'text', 'options')
+
+
 class TrainingVideoSerializer(serializers.ModelSerializer):
     created_by_username = serializers.CharField(source='created_by.username', read_only=True, default=None)
     my_status = serializers.SerializerMethodField()
@@ -298,14 +317,19 @@ class TrainingVideoSerializer(serializers.ModelSerializer):
     pending_count = serializers.SerializerMethodField()
     in_progress_count = serializers.SerializerMethodField()
     completed_count = serializers.SerializerMethodField()
+    quiz_question_count = serializers.SerializerMethodField()
 
     class Meta:
         model = TrainingVideo
         fields = (
-            'id', 'title', 'description', 'file', 'period', 'created_by', 'created_by_username',
-            'created_at', 'my_status', 'my_record_id', 'pending_count', 'in_progress_count', 'completed_count',
+            'id', 'title', 'description', 'file', 'period', 'pass_percent', 'created_by',
+            'created_by_username', 'created_at', 'my_status', 'my_record_id', 'pending_count',
+            'in_progress_count', 'completed_count', 'quiz_question_count',
         )
         read_only_fields = ('created_by', 'created_at')
+
+    def get_quiz_question_count(self, obj):
+        return obj.quiz_questions.count()
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
@@ -359,9 +383,12 @@ class TrainingRecordSerializer(serializers.ModelSerializer):
         model = TrainingRecord
         fields = (
             'id', 'user', 'username', 'video', 'video_title', 'title', 'status', 'assigned_date',
-            'due_date', 'completed_date', 'notes', 'is_overdue', 'created_at', 'updated_at',
+            'due_date', 'completed_date', 'notes', 'quiz_score', 'quiz_attempts', 'is_overdue',
+            'created_at', 'updated_at',
         )
-        read_only_fields = ('assigned_date', 'created_at', 'updated_at')
+        # quiz_score/quiz_attempts only ever change via submit_quiz() —
+        # never a direct PATCH, same reasoning as status itself.
+        read_only_fields = ('assigned_date', 'quiz_score', 'quiz_attempts', 'created_at', 'updated_at')
 
 
 class WorkflowStepSerializer(serializers.ModelSerializer):
@@ -431,3 +458,65 @@ class ElectronicSignatureSerializer(serializers.ModelSerializer):
 
     def get_valid(self, obj):
         return obj.verify()
+
+
+class AuditorAccessSerializer(serializers.ModelSerializer):
+    created_by_username = serializers.CharField(source='created_by.username', read_only=True, default=None)
+    is_active = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = AuditorAccess
+        fields = (
+            'id', 'title', 'framework', 'notes', 'access_token', 'expires_at', 'revoked_at',
+            'last_accessed_at', 'is_active', 'created_by', 'created_by_username', 'created_at',
+        )
+        # access_token/revoked_at/last_accessed_at only ever change via
+        # the model's own save() (token) or the revoke action / the
+        # auditor's own visit — never a direct PATCH.
+        read_only_fields = (
+            'access_token', 'revoked_at', 'last_accessed_at', 'created_by', 'created_at',
+        )
+
+
+class IntegrationCheckResultSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = IntegrationCheckResult
+        fields = ('id', 'integration', 'control', 'check_key', 'label', 'passed', 'detail', 'checked_at')
+        read_only_fields = fields
+
+
+class IntegrationSerializer(serializers.ModelSerializer):
+    connected_by_username = serializers.CharField(source='connected_by.username', read_only=True, default=None)
+    # Write-only: accepted on create/update to set the real secret, never
+    # echoed back — same "the platform holds it, nobody re-reads it"
+    # pattern a password field would use.
+    credentials = serializers.JSONField(write_only=True, required=False)
+    has_credentials = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Integration
+        fields = (
+            'id', 'provider', 'name', 'config', 'credentials', 'has_credentials', 'status',
+            'last_synced_at', 'last_error', 'connected_by', 'connected_by_username', 'created_at',
+        )
+        read_only_fields = ('status', 'last_synced_at', 'last_error', 'connected_by', 'created_at')
+
+    def get_has_credentials(self, obj):
+        return bool(obj.encrypted_credentials)
+
+    def create(self, validated_data):
+        credentials = validated_data.pop('credentials', None)
+        instance = Integration(**validated_data)
+        if credentials:
+            instance.set_credentials(credentials)
+        instance.save()
+        return instance
+
+    def update(self, instance, validated_data):
+        credentials = validated_data.pop('credentials', None)
+        for field, value in validated_data.items():
+            setattr(instance, field, value)
+        if credentials:
+            instance.set_credentials(credentials)
+        instance.save()
+        return instance

@@ -209,6 +209,11 @@ REST_FRAMEWORK = {
         # Public Trust Center page — cheap aggregate read, but still worth
         # a floor above the general anon rate to deter scraping.
         'trust-center-public': '60/hour',
+        # Public auditor-access link — real evidence/policy files behind
+        # this one, so it's throttled the same as the other token-is-the-
+        # credential public links even though the auditor may load it
+        # (and each control's evidence) repeatedly over an audit.
+        'auditor-access-public': '120/hour',
     },
 }
 

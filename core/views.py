@@ -23,15 +23,17 @@ from .signatures import create_signature
 from .models import (
     Document, DocumentRevision, Risk, Supplier, SupplierQuestionnaire, SupplierAgreement, Control,
     Incident, Audit, CorrectiveAction, Evidence, Workflow, WorkflowStep, AuditLog, ElectronicSignature,
-    TrainingRecord, TrainingVideo, Asset, AssetReview, Nonconformance, ApprovalMatrixRule,
-    ApprovalRecord, CalendarEvent,
+    TrainingRecord, TrainingVideo, QuizQuestion, AuditorAccess, Integration, IntegrationCheckResult,
+    Asset, AssetReview, Nonconformance, ApprovalMatrixRule, ApprovalRecord, CalendarEvent,
 )
 from .serializers import (
     DocumentSerializer, DocumentRevisionSerializer, RiskSerializer, SupplierSerializer,
     SupplierQuestionnaireSerializer, SupplierAgreementSerializer, ControlSerializer,
     IncidentSerializer, AuditSerializer, CorrectiveActionSerializer, EvidenceSerializer,
     WorkflowSerializer, WorkflowStepSerializer, AuditLogSerializer, ElectronicSignatureSerializer,
-    TrainingRecordSerializer, TrainingVideoSerializer, AssetSerializer, AssetReviewSerializer, NonconformanceSerializer,
+    TrainingRecordSerializer, TrainingVideoSerializer, QuizQuestionSerializer, QuizQuestionPublicSerializer,
+    AuditorAccessSerializer, IntegrationSerializer,
+    IntegrationCheckResultSerializer, AssetSerializer, AssetReviewSerializer, NonconformanceSerializer,
     CalendarEventSerializer, ApprovalMatrixRuleSerializer, ApprovalRecordSerializer,
 )
 
@@ -667,6 +669,109 @@ class ControlViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
             qs = qs.filter(framework=framework)
         return qs
 
+    @action(detail=False, methods=['post'], url_path='seed-framework')
+    def seed_framework(self, request):
+        """Loads one additional framework's standard catalog into this
+        tenant (HIPAA/GDPR/PCI DSS/NIST CSF — ISO 27001/SOC 2 are already
+        auto-seeded at registration). Admin-only since it adds a dozen
+        to ~90 new Control rows at once; idempotent, like the
+        registration-time seeding this mirrors."""
+        if get_role(request.user) != 'admin' and not request.user.is_superuser:
+            raise PermissionDenied('Only an admin can add a new framework catalog.')
+
+        from .data.control_catalogs import CATALOGS_BY_FRAMEWORK, seed_framework_into_current_schema
+
+        framework = request.data.get('framework')
+        if framework not in CATALOGS_BY_FRAMEWORK:
+            return Response(
+                {'detail': f'Unknown framework: {framework}. Choices: {", ".join(CATALOGS_BY_FRAMEWORK)}.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        added, total = seed_framework_into_current_schema(framework)
+        return Response({'framework': framework, 'added_count': added, 'total_count': total})
+
+    @action(detail=False, methods=['get'], url_path='framework-coverage')
+    def framework_coverage(self, request):
+        """"You're already N% of the way to framework X" — for every
+        control in X's standard catalog (whether or not X has been
+        seeded into this tenant yet), checks whether an equivalent
+        control from a framework already seeded here is Implemented.
+        The actual cross-framework-mapping differentiator: a sales/
+        motivation view an admin can check *before* committing to
+        seed_framework at all. Read-only, any tenant member."""
+        from .data.control_catalogs import CATALOGS_BY_FRAMEWORK
+        from .data.control_mappings import EQUIVALENTS_INDEX
+
+        framework = request.query_params.get('framework')
+        catalog = CATALOGS_BY_FRAMEWORK.get(framework)
+        if not catalog:
+            return Response(
+                {'detail': f'Unknown framework: {framework}. Choices: {", ".join(CATALOGS_BY_FRAMEWORK)}.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Every control this tenant already has in OTHER frameworks,
+        # keyed for an O(1) lookup per equivalent below.
+        existing_status = {
+            (c.framework, c.identifier): c.status
+            for c in Control.objects.exclude(framework=framework)
+        }
+
+        rows = []
+        covered_count = 0
+        for identifier, name in catalog:
+            equivalents = EQUIVALENTS_INDEX.get((framework, identifier), [])
+            covering = [
+                {'framework': other_framework, 'identifier': other_identifier, 'theme': theme}
+                for other_framework, other_identifier, theme in equivalents
+                if existing_status.get((other_framework, other_identifier)) == Control.Status.IMPLEMENTED
+            ]
+            if covering:
+                covered_count += 1
+            rows.append({
+                'identifier': identifier, 'name': name,
+                'already_covered': bool(covering), 'covering_controls': covering,
+            })
+
+        return Response({
+            'framework': framework,
+            'total_controls': len(catalog),
+            'already_covered_count': covered_count,
+            'coverage_percent': round(100 * covered_count / len(catalog)) if catalog else 0,
+            'already_seeded': Control.objects.filter(framework=framework).exists(),
+            'controls': rows,
+        })
+
+    @action(detail=True, methods=['get'])
+    def mappings(self, request, pk=None):
+        """What this one control maps to in other frameworks — whether
+        or not those frameworks are seeded in this tenant yet. Where a
+        mapped framework IS seeded, includes that control's real id/
+        status so the frontend can link straight to it."""
+        from django.db.models import Q
+        from .data.control_mappings import EQUIVALENTS_INDEX
+
+        control = self.get_object()
+        equivalents = EQUIVALENTS_INDEX.get((control.framework, control.identifier), [])
+
+        existing = {}
+        if equivalents:
+            lookup = Q()
+            for other_framework, other_identifier, _theme in equivalents:
+                lookup |= Q(framework=other_framework, identifier=other_identifier)
+            existing = {(c.framework, c.identifier): c for c in Control.objects.filter(lookup)}
+
+        rows = []
+        for other_framework, other_identifier, theme in equivalents:
+            match = existing.get((other_framework, other_identifier))
+            rows.append({
+                'framework': other_framework, 'identifier': other_identifier, 'theme': theme,
+                'seeded': match is not None,
+                'control_id': match.id if match else None,
+                'status': match.status if match else None,
+            })
+        return Response(rows)
+
 
 class IncidentViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
     queryset = Incident.objects.all()
@@ -926,6 +1031,110 @@ class TrainingVideoViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelView
         content_type, _ = mimetypes.guess_type(video.file.name)
         return FileResponse(video.file.open('rb'), content_type=content_type or 'video/mp4')
 
+    @action(detail=True, methods=['get'])
+    def quiz(self, request, pk=None):
+        """The questions a trainee answers after watching — correct_index
+        stripped (see QuizQuestionPublicSerializer) so the answer can't
+        just be read out of the API response before submitting."""
+        video = self.get_object()
+        return Response(QuizQuestionPublicSerializer(video.quiz_questions.all(), many=True).data)
+
+    @action(detail=True, methods=['get'], url_path='team-completion')
+    def team_completion(self, request, pk=None):
+        """Per-team (UserGroup) completion for this video, plus each
+        member's current streak — the "which teams still need this" view
+        a flat per-person list doesn't give you, and the "100% trained"
+        badge/streak the whole engagement angle is built around. Read
+        access matches the video itself (any tenant member).
+
+        UserGroup is a SHARED_APP model (tenants app) — every tenant's
+        groups live in the same table, distinguished only by `tenant`.
+        Filtering by the current tenant is required here, the same way
+        UserGroupViewSet.get_queryset() does it, or this would leak every
+        other tenant's team names and rosters into the response."""
+        from django.db import connection as _connection
+        from tenants.models import UserGroup
+
+        video = self.get_object()
+        tenant = getattr(_connection, 'tenant', None)
+        assignments_by_user = {a.user_id: a for a in video.assignments.select_related('user')}
+
+        payload = []
+        for group in UserGroup.objects.filter(tenant=tenant).prefetch_related('members__user'):
+            member_users = [m.user for m in group.members.all()]
+            rows = []
+            completed = 0
+            for user in member_users:
+                assignment = assignments_by_user.get(user.id)
+                record_status = assignment.status if assignment else None
+                if record_status == TrainingRecord.Status.COMPLETED:
+                    completed += 1
+                rows.append({
+                    'username': user.username,
+                    'status': record_status,
+                    'streak': _compute_training_streak(user),
+                })
+            total = len(member_users)
+            payload.append({
+                'group_id': group.id,
+                'group_name': group.name,
+                'total_members': total,
+                'completed_members': completed,
+                'percent': round(100 * completed / total) if total else 0,
+                'fully_trained': total > 0 and completed == total,
+                'members': rows,
+            })
+        return Response(payload)
+
+
+def _compute_training_streak(user):
+    """How many of this user's most-recently-published videos they've
+    completed, counting back from the newest until the first one that
+    isn't Completed — skipped entirely if they were never assigned it at
+    all (that's not a failure on their part, just not their video)."""
+    records = (
+        TrainingRecord.objects.filter(user=user, video__isnull=False)
+        .select_related('video').order_by('-video__created_at')
+    )
+    streak = 0
+    for record in records:
+        if record.status == TrainingRecord.Status.COMPLETED:
+            streak += 1
+        else:
+            break
+    return streak
+
+
+class QuizQuestionViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
+    """Quiz question management for a TrainingVideo — same admin/auditor
+    tier as managing the video itself. Reading the full question set
+    (correct_index included) is also admin/auditor only — a trainee
+    taking the quiz uses TrainingVideoViewSet.quiz instead, which strips
+    the answer."""
+
+    serializer_class = QuizQuestionSerializer
+    permission_classes = [HasTenantRoleStrict]
+    allowed_roles = ['admin', 'auditor']
+
+    def get_queryset(self):
+        qs = QuizQuestion.objects.select_related('video').all()
+        video_id = self.request.query_params.get('video')
+        if video_id:
+            qs = qs.filter(video_id=video_id)
+        return qs
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        self._log(AuditLog.Action.CREATE, instance)
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        self._log(AuditLog.Action.UPDATE, instance)
+
+    def perform_destroy(self, instance):
+        self._log(AuditLog.Action.DELETE, instance)
+        instance.delete()
+
 
 class TrainingRecordViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
     """Security awareness training tracking (ISO 27001 A.6.3). Any tenant
@@ -1002,6 +1211,56 @@ class TrainingRecordViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelVie
         record.save()
         self._log(AuditLog.Action.UPDATE, record)
         return Response(TrainingRecordSerializer(record).data)
+
+    @action(detail=True, methods=['post'], url_path='submit-quiz')
+    def submit_quiz(self, request, pk=None):
+        """Grades the trainee's answers against their video's quiz
+        questions. Passing (>= video.pass_percent) completes the
+        assignment exactly like complete() would; failing resets it back
+        to Pending instead of counting it done — the "auto-fail ->
+        reassign" this whole feature exists for, so a completed video
+        actually means the quiz was passed, not just clicked through."""
+        record = self.get_object()
+        if record.user_id != request.user.pk and not request.user.is_superuser:
+            if get_role(request.user) not in ('admin', 'auditor'):
+                raise PermissionDenied('You can only submit your own quiz.')
+
+        if not record.video:
+            return Response({'detail': 'This training record has no video/quiz.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        questions = list(record.video.quiz_questions.all())
+        if not questions:
+            return Response(
+                {'detail': 'This video has no quiz questions configured.'}, status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        answers = request.data.get('answers')
+        if not isinstance(answers, list) or len(answers) != len(questions):
+            return Response(
+                {'detail': f'Expected exactly {len(questions)} answers.'}, status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        correct = sum(1 for q, a in zip(questions, answers) if a == q.correct_index)
+        score = round(100 * correct / len(questions))
+        passed = score >= record.video.pass_percent
+
+        record.quiz_score = score
+        record.quiz_attempts += 1
+        if passed:
+            record.status = TrainingRecord.Status.COMPLETED
+            record.completed_date = timezone.now().date()
+        else:
+            record.status = TrainingRecord.Status.ASSIGNED
+            record.completed_date = None
+        record.save()
+        self._log(
+            AuditLog.Action.UPDATE, record,
+            metadata={'action': 'quiz_submitted', 'score': score, 'passed': passed},
+        )
+        return Response({
+            **TrainingRecordSerializer(record).data,
+            'passed': passed, 'correct': correct, 'total': len(questions),
+        })
 
 
 class WorkflowStepViewSet(viewsets.ReadOnlyModelViewSet):
@@ -1213,6 +1472,283 @@ class PublicTrustCenterView(APIView):
                 category=Document.Category.POLICY, status=Document.Status.APPROVED,
             ).count(),
         })
+
+
+class AuditorAccessViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
+    """Scoped, time-boxed, read-only links for an external auditor — see
+    AuditorAccess's docstring. Creating/revoking one exposes real
+    evidence to an outside party, so it's admin-only (a higher bar than
+    Supplier Questionnaires' admin/user tier); any admin/auditor can view
+    the list to know what's currently shared, same visibility tier as
+    AccessReviewViewSet/AssetReviewViewSet."""
+
+    serializer_class = AuditorAccessSerializer
+    permission_classes = [HasTenantRoleStrict]
+    allowed_roles = ['admin', 'auditor']
+
+    def get_queryset(self):
+        return AuditorAccess.objects.select_related('created_by').all()
+
+    def _require_admin(self, request):
+        if request.user.is_superuser:
+            return
+        if get_role(request.user) != 'admin':
+            raise PermissionDenied('Only an admin can create or revoke auditor access links.')
+
+    def perform_create(self, serializer):
+        self._require_admin(self.request)
+        instance = serializer.save(created_by=self.request.user)
+        self._log(AuditLog.Action.CREATE, instance)
+
+    def perform_update(self, serializer):
+        self._require_admin(self.request)
+        instance = serializer.save()
+        self._log(AuditLog.Action.UPDATE, instance)
+
+    def perform_destroy(self, instance):
+        self._require_admin(self.request)
+        self._log(AuditLog.Action.DELETE, instance)
+        instance.delete()
+
+    @action(detail=True, methods=['post'])
+    def revoke(self, request, pk=None):
+        """Ends the link immediately, before its own expiry — e.g. the
+        audit concluded early, or the link was shared by mistake."""
+        self._require_admin(request)
+        access = self.get_object()
+        access.revoked_at = timezone.now()
+        access.save(update_fields=['revoked_at'])
+        self._log(AuditLog.Action.UPDATE, access, metadata={'action': 'revoked'})
+        return Response(AuditorAccessSerializer(access).data)
+
+
+class IntegrationViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
+    """Connected third-party accounts used for continuous, automated
+    control evidence — see Integration's docstring and core/integrations/.
+    Admin-only to connect/edit/remove (these hold real, encrypted
+    third-party credentials — a higher bar than most tenant data, same
+    tier as AuditorAccess); admin/auditor can view what's connected and
+    its last sync result."""
+
+    serializer_class = IntegrationSerializer
+    permission_classes = [HasTenantRoleStrict]
+    allowed_roles = ['admin', 'auditor']
+
+    def get_queryset(self):
+        return Integration.objects.select_related('connected_by').all()
+
+    def _require_admin(self, request):
+        if request.user.is_superuser:
+            return
+        if get_role(request.user) != 'admin':
+            raise PermissionDenied('Only an admin can connect, edit, or remove an integration.')
+
+    def perform_create(self, serializer):
+        self._require_admin(self.request)
+        instance = serializer.save(connected_by=self.request.user)
+        self._log(AuditLog.Action.CREATE, instance)
+
+    def perform_update(self, serializer):
+        self._require_admin(self.request)
+        instance = serializer.save()
+        self._log(AuditLog.Action.UPDATE, instance)
+
+    def perform_destroy(self, instance):
+        self._require_admin(self.request)
+        self._log(AuditLog.Action.DELETE, instance)
+        instance.delete()
+
+    @action(detail=True, methods=['post'], url_path='test-connection')
+    def test_connection(self, request, pk=None):
+        """Checks the stored credentials actually work, without running
+        (or recording) a full sync — lets an admin catch a typo'd token
+        immediately instead of only finding out on the next scheduled sync."""
+        self._require_admin(request)
+        from .integrations.registry import get_provider
+        from .integrations.base import IntegrationError
+
+        integration = self.get_object()
+        provider = get_provider(integration.provider)
+        try:
+            result = provider.test_connection(integration.get_credentials(), integration.config)
+        except IntegrationError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'ok': True, **(result or {})})
+
+    @action(detail=True, methods=['post'])
+    def sync(self, request, pk=None):
+        """Runs this integration's checks right now — the same sync a
+        scheduled task would run periodically — and applies the results
+        to the matching Controls/Evidence immediately."""
+        self._require_admin(request)
+        from .integrations.sync import sync_integration
+        from .integrations.base import IntegrationError
+
+        integration = self.get_object()
+        try:
+            results = sync_integration(integration, actor=request.user)
+        except IntegrationError as exc:
+            self._log(AuditLog.Action.UPDATE, integration, metadata={'action': 'sync_failed', 'error': str(exc)})
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        self._log(AuditLog.Action.UPDATE, integration, metadata={'action': 'synced', 'check_count': len(results)})
+        return Response({
+            'integration': IntegrationSerializer(integration).data,
+            'results': IntegrationCheckResultSerializer(results, many=True).data,
+        })
+
+
+class IntegrationCheckResultViewSet(CsvExportMixin, viewsets.ReadOnlyModelViewSet):
+    """Read-only history of every check a sync has ever run — the
+    evidence trail proving a control's status isn't just manually set,
+    same admin/auditor visibility tier as IntegrationViewSet."""
+
+    serializer_class = IntegrationCheckResultSerializer
+    permission_classes = [HasTenantRoleStrict]
+    allowed_roles = ['admin', 'auditor']
+
+    def get_queryset(self):
+        qs = IntegrationCheckResult.objects.select_related('integration', 'control').all()
+        integration_id = self.request.query_params.get('integration')
+        if integration_id:
+            qs = qs.filter(integration_id=integration_id)
+        control_id = self.request.query_params.get('control')
+        if control_id:
+            qs = qs.filter(control_id=control_id)
+        return qs
+
+
+class PublicAuditorAccessView(APIView):
+    """What an external auditor actually sees at their link — the
+    controls in scope (optionally filtered to one framework), each
+    control's attached Evidence, and every Approved policy. No accounts,
+    no incidents, no risks, no other tenant data — deliberately narrower
+    than an internal member's own view, matching exactly what a
+    certification audit asks to see. AllowAny/no-account, same pattern as
+    PublicQuestionnaireView/PublicAgreementView."""
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auditor-access-public'
+
+    @staticmethod
+    def _get_valid_access(token):
+        access = AuditorAccess.objects.filter(access_token=token).first()
+        if not access or not access.is_active:
+            return None
+        return access
+
+    def get(self, request, token):
+        from django.db import connection
+
+        access = self._get_valid_access(token)
+        if not access:
+            return Response({'detail': 'This link is not valid or has expired.'}, status=status.HTTP_404_NOT_FOUND)
+
+        access.last_accessed_at = timezone.now()
+        access.save(update_fields=['last_accessed_at'])
+
+        tenant = getattr(connection, 'tenant', None)
+        control_ct = ContentType.objects.get_for_model(Control)
+
+        controls_qs = Control.objects.all()
+        if access.framework:
+            controls_qs = controls_qs.filter(framework=access.framework)
+
+        controls = []
+        for control in controls_qs:
+            evidence = Evidence.objects.filter(content_type=control_ct, object_id=control.id)
+            controls.append({
+                'id': control.id,
+                'framework': control.framework,
+                'identifier': control.identifier,
+                'name': control.name,
+                'description': control.description,
+                'status': control.status,
+                'owner': control.owner,
+                'evidence': [
+                    {'id': ev.id, 'title': ev.title, 'file': f'/api/public/auditor-access/{token}/evidence/{ev.id}/'}
+                    for ev in evidence
+                ],
+            })
+
+        policies = Document.objects.filter(category=Document.Category.POLICY, status=Document.Status.APPROVED)
+        policies_payload = [
+            {
+                'id': p.id, 'doc_id': p.doc_id, 'title': p.title, 'version': p.version,
+                'classification': p.classification,
+                'file': f'/api/public/auditor-access/{token}/policies/{p.id}/' if p.file else None,
+            }
+            for p in policies
+        ]
+
+        return Response({
+            'title': access.title,
+            'organization_name': tenant.name if tenant else '',
+            'framework': access.framework or None,
+            'expires_at': access.expires_at,
+            'controls': controls,
+            'policies': policies_payload,
+        })
+
+
+class PublicAuditorEvidenceFileView(APIView):
+    """Streams one control's evidence file to the auditor — scoped so the
+    token can only ever reach Evidence actually attached to a Control
+    (never any other object's evidence), and only while the link is
+    still active."""
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auditor-access-public'
+
+    def get(self, request, token, evidence_id):
+        access = PublicAuditorAccessView._get_valid_access(token)
+        if not access:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        control_ct = ContentType.objects.get_for_model(Control)
+        evidence = Evidence.objects.filter(pk=evidence_id, content_type=control_ct).first()
+        if not evidence:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+        control = Control.objects.filter(pk=evidence.object_id).first()
+        if not control or (access.framework and control.framework != access.framework):
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        from django.http import FileResponse
+        return FileResponse(
+            evidence.file.open('rb'), as_attachment=True,
+            filename=evidence.title or evidence.file.name.rsplit('/', 1)[-1],
+        )
+
+
+class PublicAuditorPolicyFileView(APIView):
+    """Streams one Approved policy's file to the auditor — same token
+    scoping as PublicAuditorEvidenceFileView, restricted to Approved
+    policy Documents only (never a draft, never another category)."""
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auditor-access-public'
+
+    def get(self, request, token, document_id):
+        access = PublicAuditorAccessView._get_valid_access(token)
+        if not access:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        document = Document.objects.filter(
+            pk=document_id, category=Document.Category.POLICY, status=Document.Status.APPROVED,
+        ).first()
+        if not document or not document.file:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        from django.http import FileResponse
+        return FileResponse(
+            document.file.open('rb'), as_attachment=True,
+            filename=document.file.name.rsplit('/', 1)[-1],
+        )
 
 
 class AuditLogViewSet(CsvExportMixin, viewsets.ReadOnlyModelViewSet):

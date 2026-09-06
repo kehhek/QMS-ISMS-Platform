@@ -2,7 +2,7 @@ from django.contrib import admin
 from .models import (
     Document, DocumentRevision, Risk, Supplier, SupplierQuestionnaire, SupplierAgreement, Control, Incident, Audit,
     CorrectiveAction, Evidence, Workflow, WorkflowStep, AuditLog, ElectronicSignature, TrainingRecord,
-    TrainingVideo,
+    TrainingVideo, QuizQuestion, AuditorAccess, Integration, IntegrationCheckResult,
     Asset, AssetReview, Nonconformance, ApprovalMatrixRule, ApprovalRecord, CalendarEvent,
 )
 
@@ -80,6 +80,29 @@ class SupplierAgreementAdmin(admin.ModelAdmin):
     readonly_fields = ('access_token',)
 
 
+@admin.register(AuditorAccess)
+class AuditorAccessAdmin(admin.ModelAdmin):
+    list_display = ('title', 'framework', 'expires_at', 'revoked_at', 'last_accessed_at', 'created_by', 'created_at')
+    list_filter = ('framework',)
+    search_fields = ('title', 'notes')
+    readonly_fields = ('access_token',)
+
+
+@admin.register(Integration)
+class IntegrationAdmin(admin.ModelAdmin):
+    list_display = ('name', 'provider', 'status', 'last_synced_at', 'connected_by', 'created_at')
+    list_filter = ('provider', 'status')
+    search_fields = ('name',)
+    readonly_fields = ('encrypted_credentials',)
+
+
+@admin.register(IntegrationCheckResult)
+class IntegrationCheckResultAdmin(admin.ModelAdmin):
+    list_display = ('label', 'integration', 'control', 'passed', 'checked_at')
+    list_filter = ('passed',)
+    search_fields = ('label', 'integration__name')
+
+
 @admin.register(Control)
 class ControlAdmin(admin.ModelAdmin):
     list_display = ('framework', 'identifier', 'name', 'status', 'owner')
@@ -137,8 +160,14 @@ class ApprovalRecordAdmin(admin.ModelAdmin):
 
 @admin.register(TrainingVideo)
 class TrainingVideoAdmin(admin.ModelAdmin):
-    list_display = ('title', 'period', 'created_by', 'created_at')
+    list_display = ('title', 'period', 'pass_percent', 'created_by', 'created_at')
     search_fields = ('title', 'description', 'period')
+
+
+@admin.register(QuizQuestion)
+class QuizQuestionAdmin(admin.ModelAdmin):
+    list_display = ('text', 'video', 'order', 'correct_index')
+    search_fields = ('text', 'video__title')
 
 
 @admin.register(TrainingRecord)

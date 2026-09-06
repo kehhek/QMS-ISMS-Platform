@@ -6,13 +6,14 @@ from .views import (
     DocumentViewSet, DocumentRevisionViewSet, RiskViewSet, SupplierViewSet, SupplierQuestionnaireViewSet,
     SupplierAgreementViewSet, ControlViewSet, IncidentViewSet, AuditViewSet, CorrectiveActionViewSet,
     EvidenceViewSet, WorkflowViewSet, WorkflowStepViewSet, AuditLogViewSet, ElectronicSignatureViewSet,
-    CoreContentTypesView, DashboardSummaryView, TrainingRecordViewSet, TrainingVideoViewSet,
+    CoreContentTypesView, DashboardSummaryView, TrainingRecordViewSet, TrainingVideoViewSet, QuizQuestionViewSet,
     IsmsCalendarView, ApprovalMatrixView, AssetViewSet, AssetReviewViewSet, NonconformanceViewSet,
     ApprovalMatrixRuleViewSet, ApprovalRecordViewSet, CalendarEventViewSet, PolicyTemplateListView,
     PolicyTemplateGenerateView, PublicQuestionnaireView, PublicAgreementView, PublicAgreementFileView,
-    PublicTrustCenterView,
+    PublicTrustCenterView, AuditorAccessViewSet, PublicAuditorAccessView, PublicAuditorEvidenceFileView,
+    PublicAuditorPolicyFileView, IntegrationViewSet, IntegrationCheckResultViewSet,
 )
-from .reports import ControlsStatusReportView
+from .reports import ControlsStatusReportView, StatementOfApplicabilityReportView
 
 
 def ping(request):
@@ -40,9 +41,13 @@ router.register(r'audit-log', AuditLogViewSet, basename='audit-log')
 router.register(r'signatures', ElectronicSignatureViewSet, basename='signature')
 router.register(r'training-records', TrainingRecordViewSet, basename='training-record')
 router.register(r'training-videos', TrainingVideoViewSet, basename='training-video')
+router.register(r'quiz-questions', QuizQuestionViewSet, basename='quiz-question')
 router.register(r'approval-matrix-rules', ApprovalMatrixRuleViewSet, basename='approval-matrix-rule')
 router.register(r'approval-records', ApprovalRecordViewSet, basename='approval-record')
 router.register(r'calendar-events', CalendarEventViewSet, basename='calendar-event')
+router.register(r'auditor-access', AuditorAccessViewSet, basename='auditor-access')
+router.register(r'integrations', IntegrationViewSet, basename='integration')
+router.register(r'integration-check-results', IntegrationCheckResultViewSet, basename='integration-check-result')
 
 urlpatterns = [
     path('ping/', ping),
@@ -56,6 +61,19 @@ urlpatterns = [
     path('public/agreements/<str:token>/', PublicAgreementView.as_view(), name='public-agreement'),
     path('public/agreements/<str:token>/file/', PublicAgreementFileView.as_view(), name='public-agreement-file'),
     path('public/trust-center/', PublicTrustCenterView.as_view(), name='public-trust-center'),
+    path('public/auditor-access/<str:token>/', PublicAuditorAccessView.as_view(), name='public-auditor-access'),
+    path(
+        'public/auditor-access/<str:token>/evidence/<int:evidence_id>/',
+        PublicAuditorEvidenceFileView.as_view(), name='public-auditor-evidence',
+    ),
+    path(
+        'public/auditor-access/<str:token>/policies/<int:document_id>/',
+        PublicAuditorPolicyFileView.as_view(), name='public-auditor-policy',
+    ),
     path('reports/controls-status/', ControlsStatusReportView.as_view(), name='controls-status-report'),
+    path(
+        'reports/statement-of-applicability/', StatementOfApplicabilityReportView.as_view(),
+        name='statement-of-applicability-report',
+    ),
     path('', include(router.urls)),
 ]

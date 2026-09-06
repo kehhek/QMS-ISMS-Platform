@@ -394,6 +394,10 @@ class Control(models.Model):
     class Framework(models.TextChoices):
         ISO27001 = 'iso27001', 'ISO/IEC 27001:2022 Annex A'
         SOC2 = 'soc2', 'SOC 2 (Common Criteria)'
+        HIPAA = 'hipaa', 'HIPAA Security Rule'
+        GDPR = 'gdpr', 'GDPR'
+        PCI_DSS = 'pci_dss', 'PCI DSS v4.0'
+        NIST_CSF = 'nist_csf', 'NIST Cybersecurity Framework 2.0'
         CUSTOM = 'custom', 'Custom'
 
     class Status(models.TextChoices):
@@ -408,6 +412,16 @@ class Control(models.Model):
     description = models.TextField(blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.NOT_IMPLEMENTED)
     owner = models.CharField(max_length=255, blank=True)
+    # The one genuinely qualitative field a real Statement of
+    # Applicability needs that nothing else in the system can derive —
+    # why this control is (or isn't, if status=NOT_APPLICABLE) in scope.
+    # Everything else on the generated SoA (status, owner, linked
+    # Evidence) is pulled live; this is the one line an auditor expects
+    # an actual person to have written. Blank is fine — the report still
+    # generates, just with "—" for any control not yet justified.
+    soa_justification = models.TextField(
+        blank=True, help_text='Why this control is (or is not) applicable — shown on the generated Statement of Applicability.',
+    )
     risks = models.ManyToManyField(Risk, blank=True, related_name='controls')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -557,6 +571,13 @@ class TrainingVideo(models.Model):
     # be a callable rather than a frozen setting.
     file = models.FileField(upload_to='training-videos/%Y/%m/', storage=get_evidence_storage)
     period = models.CharField(max_length=100, blank=True, help_text='e.g. "September 2026"')
+    # The minimum quiz score (see QuizQuestion) to actually count the
+    # video as watched — this is the entire "make people actually watch
+    # it" mechanism: below this, TrainingRecordViewSet.submit_quiz()
+    # resets the trainee back to Pending instead of marking it complete.
+    # A video with no quiz questions has nothing to fail, so it behaves
+    # exactly like before this feature existed.
+    pass_percent = models.PositiveIntegerField(default=80, help_text='Minimum quiz score (%) required to pass.')
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
     )
@@ -567,6 +588,26 @@ class TrainingVideo(models.Model):
 
     def __str__(self):
         return self.title
+
+
+class QuizQuestion(models.Model):
+    """One multiple-choice question shown after a TrainingVideo. Options
+    are stored as a plain list of strings; correct_index is never sent
+    to the trainee before they submit an answer (see
+    TrainingVideoViewSet.quiz, which strips it) — only compared
+    server-side in TrainingRecordViewSet.submit_quiz."""
+
+    video = models.ForeignKey(TrainingVideo, on_delete=models.CASCADE, related_name='quiz_questions')
+    order = models.PositiveIntegerField(default=0)
+    text = models.CharField(max_length=500)
+    options = models.JSONField(default=list, help_text='List of answer choice strings.')
+    correct_index = models.PositiveIntegerField(help_text='Index into "options" for the correct answer.')
+
+    class Meta:
+        ordering = ['order', 'id']
+
+    def __str__(self):
+        return self.text
 
 
 class TrainingRecord(models.Model):
@@ -594,6 +635,11 @@ class TrainingRecord(models.Model):
     due_date = models.DateField(null=True, blank=True)
     completed_date = models.DateField(null=True, blank=True)
     notes = models.TextField(blank=True)
+    # Set by submit_quiz() — the most recent attempt's score, and how
+    # many attempts it's taken so far (a failed attempt increments this
+    # and resets status back to ASSIGNED rather than counting as done).
+    quiz_score = models.PositiveIntegerField(null=True, blank=True, help_text='Percent correct on the most recent quiz attempt.')
+    quiz_attempts = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -639,6 +685,50 @@ class Evidence(models.Model):
 
     class Meta:
         ordering = ['-uploaded_at']
+
+    def __str__(self):
+        return self.title
+
+
+class AuditorAccess(models.Model):
+    """A scoped, time-boxed, read-only link for an external auditor —
+    no account of their own needed, same no-account public-link pattern
+    as SupplierQuestionnaire/SupplierAgreement. Turns "send the auditor
+    an evidence export" into "share one link that expires on its own":
+    the auditor sees exactly the controls (optionally filtered to one
+    framework), their attached Evidence, and Approved policies — nothing
+    else, and only until `expires_at` or `revoked_at`, whichever comes
+    first."""
+
+    title = models.CharField(max_length=255, help_text='e.g. "ISO 27001 2026 Certification Audit"')
+    # Blank = every framework's controls are in scope; set to one of
+    # Control.Framework's values to scope the whole link to just that
+    # framework's certification.
+    framework = models.CharField(max_length=20, blank=True, help_text='Leave blank for all frameworks.')
+    notes = models.TextField(blank=True, help_text='e.g. auditor name/firm, for your own reference.')
+    access_token = models.CharField(max_length=64, unique=True, editable=False)
+    expires_at = models.DateTimeField(help_text='The link stops working after this time, no exceptions.')
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    last_accessed_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def save(self, *args, **kwargs):
+        if not self.access_token:
+            self.access_token = secrets.token_urlsafe(32)
+        super().save(*args, **kwargs)
+
+    @property
+    def is_active(self):
+        from django.utils import timezone
+        if self.revoked_at:
+            return False
+        return timezone.now() < self.expires_at
 
     def __str__(self):
         return self.title
@@ -934,3 +1024,82 @@ class ApprovalRecord(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValueError('ApprovalRecord entries are immutable and cannot be deleted.')
+
+
+class Integration(models.Model):
+    """A connected third-party account used for continuous, automated
+    control evidence — see core/integrations/ for the actual provider
+    logic. The real differentiator this exists for: a Control most
+    tenants would otherwise mark "Implemented" once and forget gets
+    re-verified against the live system on every sync, with a fresh,
+    dated Evidence row each time — not a single manually-set status that
+    silently goes stale."""
+
+    class Provider(models.TextChoices):
+        GITHUB = 'github', 'GitHub'
+        AWS = 'aws', 'AWS'
+
+    class Status(models.TextChoices):
+        CONNECTED = 'connected', 'Connected'
+        ERROR = 'error', 'Error'
+        DISCONNECTED = 'disconnected', 'Disconnected'
+
+    provider = models.CharField(max_length=20, choices=Provider.choices)
+    name = models.CharField(max_length=255, help_text='e.g. "Acme Corp GitHub Org"')
+    # Non-secret settings a provider's checks need (e.g. which repo or
+    # bucket to look at) — plain JSON, nothing sensitive goes here; the
+    # actual secret lives only in encrypted_credentials below.
+    config = models.JSONField(default=dict, blank=True)
+    # Fernet-encrypted (see core/storage.py's encrypt_text/decrypt_text —
+    # same per-tenant derived key as evidence files) JSON blob of the
+    # real credential (a GitHub PAT, AWS access key pair, ...). Never
+    # returned by the API once set — see IntegrationSerializer.
+    encrypted_credentials = models.TextField(blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DISCONNECTED)
+    last_synced_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True)
+    connected_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def set_credentials(self, secret_dict):
+        import json
+        from .storage import encrypt_text
+        self.encrypted_credentials = encrypt_text(json.dumps(secret_dict))
+
+    def get_credentials(self):
+        import json
+        from .storage import decrypt_text
+        if not self.encrypted_credentials:
+            return {}
+        return json.loads(decrypt_text(self.encrypted_credentials))
+
+    def __str__(self):
+        return self.name
+
+
+class IntegrationCheckResult(models.Model):
+    """One check's outcome from one sync run (e.g. "branch protection
+    enabled on main: yes") — kept as permanent history, never
+    overwritten, so a control's real compliance trend over time is
+    visible rather than just its current snapshot."""
+
+    integration = models.ForeignKey(Integration, on_delete=models.CASCADE, related_name='check_results')
+    control = models.ForeignKey(
+        'Control', null=True, blank=True, on_delete=models.SET_NULL, related_name='automated_checks',
+    )
+    check_key = models.CharField(max_length=100, help_text='e.g. "branch_protection"')
+    label = models.CharField(max_length=255, help_text='Human-readable check name.')
+    passed = models.BooleanField()
+    detail = models.TextField(blank=True)
+    checked_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-checked_at']
+
+    def __str__(self):
+        return f'{self.label}: {"pass" if self.passed else "fail"}'

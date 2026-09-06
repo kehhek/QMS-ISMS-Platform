@@ -885,3 +885,165 @@ class PublicTrustCenterTests(TestCase):
         body_str = str(resp.data)
         for leaky_key in ('risks', 'incidents', 'controls', 'documents'):
             self.assertNotIn(leaky_key, resp.data)
+
+
+class AuditorAccessTests(TestCase):
+    """A scoped, time-boxed, read-only link for an external auditor — no
+    account needed, same no-account public-link pattern as the supplier
+    questionnaire/agreement flows. Framework scoping and expiry/
+    revocation are the actual security boundary here, so those get the
+    most coverage."""
+
+    def setUp(self):
+        self.tenant = make_tenant('auditoraccesstest')
+        self.host = f'{self.tenant.schema_name}.localhost'
+        with schema_context(self.tenant.schema_name):
+            from django.contrib.auth import get_user_model
+            from tenants.models import Membership
+            from core.models import Control, Evidence, Document
+            from django.contrib.contenttypes.models import ContentType
+
+            User = get_user_model()
+            self.admin = User.objects.create_user('aa_admin', 'a@example.com', 'pass12345')
+            Membership.objects.create(user=self.admin, tenant=self.tenant, role=Membership.Role.ADMIN)
+            self.auditor_role_user = User.objects.create_user('aa_auditor', 'x@example.com', 'pass12345')
+            Membership.objects.create(user=self.auditor_role_user, tenant=self.tenant, role=Membership.Role.AUDITOR)
+            self.plain_user = User.objects.create_user('aa_user', 'u@example.com', 'pass12345')
+            Membership.objects.create(user=self.plain_user, tenant=self.tenant, role=Membership.Role.USER)
+
+            self.iso_control = Control.objects.create(
+                framework='iso27001', identifier='A.5.1', name='Policies', status='implemented',
+            )
+            self.soc2_control = Control.objects.create(framework='soc2', identifier='CC1.1', name='Integrity')
+            control_ct = ContentType.objects.get_for_model(Control)
+
+            from django.core.files.uploadedfile import SimpleUploadedFile
+            self.iso_evidence = Evidence.objects.create(
+                title='Screenshot', content_type=control_ct, object_id=self.iso_control.id,
+                file=SimpleUploadedFile('shot.png', b'iso evidence bytes'),
+            )
+            self.soc2_evidence = Evidence.objects.create(
+                title='SOC2 doc', content_type=control_ct, object_id=self.soc2_control.id,
+                file=SimpleUploadedFile('soc2.txt', b'soc2 evidence bytes'),
+            )
+            self.approved_policy = Document.objects.create(
+                title='Security Policy', category='policy', status='approved',
+                file=SimpleUploadedFile('policy.pdf', b'%PDF-1.4 fake'),
+            )
+            Document.objects.create(title='Draft Policy', category='policy', status='draft')
+
+        self.api = APIClient()
+        self.api.force_authenticate(user=self.admin)
+
+    def _create_access(self, **extra):
+        from django.utils import timezone
+        import datetime
+
+        payload = {
+            'title': 'ISO 27001 Audit', 'framework': 'iso27001',
+            'expires_at': (timezone.now() + datetime.timedelta(days=7)).isoformat(),
+        }
+        payload.update(extra)
+        resp = self.api.post('/api/auditor-access/', payload, format='json', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 201, resp.data)
+        return resp.data
+
+    def test_only_admin_can_create_a_link(self):
+        auditor_api = APIClient()
+        auditor_api.force_authenticate(user=self.auditor_role_user)
+        resp = auditor_api.post(
+            '/api/auditor-access/', {'title': 'x', 'expires_at': '2099-01-01T00:00:00Z'},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_plain_user_cannot_even_list_links(self):
+        user_api = APIClient()
+        user_api.force_authenticate(user=self.plain_user)
+        resp = user_api.get('/api/auditor-access/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_auditor_role_can_view_but_not_create(self):
+        auditor_api = APIClient()
+        auditor_api.force_authenticate(user=self.auditor_role_user)
+        listing = auditor_api.get('/api/auditor-access/', HTTP_HOST=self.host)
+        self.assertEqual(listing.status_code, 200)
+
+    def test_the_public_link_is_scoped_to_its_framework(self):
+        data = self._create_access(framework='iso27001')
+        anon = APIClient()
+        resp = anon.get(f'/api/public/auditor-access/{data["access_token"]}/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        frameworks = {c['framework'] for c in resp.data['controls']}
+        self.assertEqual(frameworks, {'iso27001'})
+
+        control = next(c for c in resp.data['controls'] if c['id'] == self.iso_control.id)
+        self.assertEqual(len(control['evidence']), 1)
+        self.assertEqual(control['evidence'][0]['title'], 'Screenshot')
+
+    def test_only_approved_policies_are_exposed(self):
+        data = self._create_access()
+        anon = APIClient()
+        resp = anon.get(f'/api/public/auditor-access/{data["access_token"]}/', HTTP_HOST=self.host)
+        titles = {p['title'] for p in resp.data['policies']}
+        self.assertEqual(titles, {'Security Policy'})
+
+    def test_cannot_reach_evidence_outside_the_frameworks_scope(self):
+        data = self._create_access(framework='iso27001')
+        anon = APIClient()
+        # The soc2 control's own evidence must 404 even though the token
+        # is otherwise valid — scoping is enforced per-file, not just on
+        # the summary payload.
+        resp = anon.get(
+            f'/api/public/auditor-access/{data["access_token"]}/evidence/{self.soc2_evidence.id}/',
+            HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 404)
+
+    def test_evidence_and_policy_files_round_trip(self):
+        data = self._create_access()
+        anon = APIClient()
+        ev_resp = anon.get(
+            f'/api/public/auditor-access/{data["access_token"]}/evidence/{self.iso_evidence.id}/',
+            HTTP_HOST=self.host,
+        )
+        self.assertEqual(ev_resp.status_code, 200)
+        self.assertEqual(b''.join(ev_resp.streaming_content), b'iso evidence bytes')
+
+        policy_resp = anon.get(
+            f'/api/public/auditor-access/{data["access_token"]}/policies/{self.approved_policy.id}/',
+            HTTP_HOST=self.host,
+        )
+        self.assertEqual(policy_resp.status_code, 200)
+        self.assertEqual(b''.join(policy_resp.streaming_content), b'%PDF-1.4 fake')
+
+    def test_expired_link_is_not_reachable(self):
+        from django.utils import timezone
+        import datetime
+
+        data = self._create_access(expires_at=(timezone.now() + datetime.timedelta(seconds=1)).isoformat())
+        import time
+        time.sleep(2)
+        anon = APIClient()
+        resp = anon.get(f'/api/public/auditor-access/{data["access_token"]}/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 404)
+
+    def test_revoking_kills_access_immediately(self):
+        data = self._create_access()
+        revoke = self.api.post(f'/api/auditor-access/{data["id"]}/revoke/', HTTP_HOST=self.host)
+        self.assertEqual(revoke.status_code, 200, revoke.data)
+        self.assertFalse(revoke.data['is_active'])
+
+        anon = APIClient()
+        resp = anon.get(f'/api/public/auditor-access/{data["access_token"]}/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 404)
+
+    def test_visiting_the_link_records_last_accessed_at(self):
+        data = self._create_access()
+        self.assertIsNone(data['last_accessed_at'])
+
+        anon = APIClient()
+        anon.get(f'/api/public/auditor-access/{data["access_token"]}/', HTTP_HOST=self.host)
+
+        detail = self.api.get(f'/api/auditor-access/{data["id"]}/', HTTP_HOST=self.host)
+        self.assertIsNotNone(detail.data['last_accessed_at'])

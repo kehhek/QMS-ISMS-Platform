@@ -7,6 +7,7 @@ import ConsoleApp from './ConsoleApp'
 import QuestionnaireResponsePage from './QuestionnaireResponsePage'
 import AgreementSignPage from './AgreementSignPage'
 import TrustCenterPage from './TrustCenterPage'
+import AuditorPortalPage from './AuditorPortalPage'
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
       <Route path="/questionnaire/:token" element={<QuestionnaireResponsePage />} />
       <Route path="/agreement/:token" element={<AgreementSignPage />} />
       <Route path="/trust" element={<TrustCenterPage />} />
+      <Route path="/auditor/:token" element={<AuditorPortalPage />} />
       <Route path="*" element={<HomePage />} />
     </Routes>
   )

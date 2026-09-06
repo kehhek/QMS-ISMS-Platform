@@ -27,6 +27,8 @@ import PolicyPanel from './PolicyPanel'
 import SopPanel from './SopPanel'
 import WorkInstructionPanel from './WorkInstructionPanel'
 import UserGroupsPanel from './UserGroupsPanel'
+import AuditorAccessPanel from './AuditorAccessPanel'
+import IntegrationsPanel from './IntegrationsPanel'
 
 const TABS = [
   { key: 'dashboard', label: 'Dashboard', Component: DashboardPanel },
@@ -48,6 +50,8 @@ const TABS = [
   { key: 'awareness', label: 'Security Awareness', Component: SecurityAwarenessPanel },
   { key: 'evidence', label: 'Evidence', Component: EvidencePanel },
   { key: 'audit-log', label: 'Audit Log', Component: AuditLogPanel },
+  { key: 'auditor-access', label: 'Auditor Access', Component: AuditorAccessPanel },
+  { key: 'integrations', label: 'Integrations', Component: IntegrationsPanel },
   { key: 'members', label: 'Members', Component: MembersPanel },
   { key: 'user-groups', label: 'User Groups', Component: UserGroupsPanel },
   { key: 'access-register', label: 'Access Register', Component: AccessRegisterPanel },
@@ -62,8 +66,8 @@ const NAV_GROUPS = [
   { label: 'Overview', keys: ['dashboard', 'calendar'] },
   { label: 'Documents & Approvals', keys: ['documents', 'policies', 'sops', 'work-instructions', 'workflows', 'signatures'] },
   { label: 'Risk & Assets', keys: ['risks', 'assets', 'suppliers'] },
-  { label: 'Compliance', keys: ['controls', 'incidents', 'nonconformances', 'capa', 'audits', 'awareness'] },
-  { label: 'Evidence & Records', keys: ['evidence', 'audit-log'] },
+  { label: 'Compliance', keys: ['controls', 'integrations', 'incidents', 'nonconformances', 'capa', 'audits', 'awareness'] },
+  { label: 'Evidence & Records', keys: ['evidence', 'audit-log', 'auditor-access'] },
   { label: 'Administration', keys: ['members', 'user-groups', 'access-register', 'approval-matrix', 'org-settings'] },
 ]
 
