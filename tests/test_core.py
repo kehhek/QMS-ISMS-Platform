@@ -686,6 +686,171 @@ class SupplierQuestionnaireTests(TestCase):
         )
         self.assertEqual(create.status_code, 403)
 
+    def _respond(self, data):
+        anon = APIClient()
+        return anon.post(
+            f'/api/public/questionnaires/{data["access_token"]}/', {'answers': ['A', 'B']},
+            format='json', HTTP_HOST=self.host,
+        )
+
+    def test_approving_moves_supplier_to_active_and_emails_them(self):
+        from django.core import mail
+
+        data = self._create_questionnaire()
+        self.api.post(f'/api/supplier-questionnaires/{data["id"]}/send/', HTTP_HOST=self.host)
+        self._respond(data)
+
+        resp = self.api.post(f'/api/supplier-questionnaires/{data["id"]}/approve/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['status'], 'approved')
+        self.assertEqual(resp.data['decided_by_username'], 'sq_admin')
+        self.assertIsNotNone(resp.data['decided_at'])
+
+        self.supplier.refresh_from_db()
+        self.assertEqual(self.supplier.status, 'active')
+
+        self.assertEqual(len(mail.outbox), 2)  # send + approve
+        self.assertIn('approved', mail.outbox[-1].subject.lower())
+
+    def test_rejecting_does_not_touch_supplier_status(self):
+        data = self._create_questionnaire()
+        self.api.post(f'/api/supplier-questionnaires/{data["id"]}/send/', HTTP_HOST=self.host)
+        self._respond(data)
+
+        original_status = self.supplier.status
+        resp = self.api.post(f'/api/supplier-questionnaires/{data["id"]}/reject/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['status'], 'rejected')
+
+        self.supplier.refresh_from_db()
+        self.assertEqual(self.supplier.status, original_status)
+
+    def test_cannot_approve_before_the_supplier_has_responded(self):
+        data = self._create_questionnaire()
+        self.api.post(f'/api/supplier-questionnaires/{data["id"]}/send/', HTTP_HOST=self.host)
+        resp = self.api.post(f'/api/supplier-questionnaires/{data["id"]}/approve/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 400)
+
+    def test_can_approve_after_marking_reviewed_too(self):
+        data = self._create_questionnaire()
+        self.api.post(f'/api/supplier-questionnaires/{data["id"]}/send/', HTTP_HOST=self.host)
+        self._respond(data)
+        self.api.post(f'/api/supplier-questionnaires/{data["id"]}/review/', HTTP_HOST=self.host)
+        resp = self.api.post(f'/api/supplier-questionnaires/{data["id"]}/approve/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200, resp.data)
+
+
+class SupplierAgreementTests(TestCase):
+    """Sending a vendor agreement for e-signature once a supplier is
+    approved — same no-account public-link pattern as the questionnaire,
+    with a typed name/title standing in for ElectronicSignature (which
+    needs a real user account this external party doesn't have)."""
+
+    def setUp(self):
+        self.tenant = make_tenant('supplieragreement')
+        self.host = f'{self.tenant.schema_name}.localhost'
+        with schema_context(self.tenant.schema_name):
+            from django.contrib.auth import get_user_model
+            from tenants.models import Membership
+            from core.models import Supplier
+            User = get_user_model()
+            self.admin = User.objects.create_user('sa_admin', 'a@example.com', 'pass12345')
+            Membership.objects.create(user=self.admin, tenant=self.tenant, role=Membership.Role.ADMIN)
+            self.supplier = Supplier.objects.create(
+                name='Acme Cloud', contact_name='Jane Vendor', contact_email='vendor@example.com',
+            )
+
+        self.api = APIClient()
+        self.api.force_authenticate(user=self.admin)
+
+    def _create_agreement(self, **extra):
+        payload = {'supplier': self.supplier.id, 'title': 'Vendor Agreement', 'content': 'Standard terms.'}
+        payload.update(extra)
+        resp = self.api.post('/api/supplier-agreements/', payload, format='json', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 201, resp.data)
+        return resp.data
+
+    def test_sending_emails_the_supplier_a_working_link(self):
+        from django.core import mail
+
+        data = self._create_agreement()
+        resp = self.api.post(f'/api/supplier-agreements/{data["id"]}/send/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['status'], 'sent')
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn(data['access_token'], mail.outbox[0].body)
+
+    def test_supplier_can_view_and_sign_without_any_authentication(self):
+        data = self._create_agreement()
+        self.api.post(f'/api/supplier-agreements/{data["id"]}/send/', HTTP_HOST=self.host)
+        token = data['access_token']
+
+        anon = APIClient()
+        view = anon.get(f'/api/public/agreements/{token}/', HTTP_HOST=self.host)
+        self.assertEqual(view.status_code, 200)
+        self.assertFalse(view.data['already_signed'])
+
+        sign = anon.post(
+            f'/api/public/agreements/{token}/', {'signer_name': 'Jane Vendor', 'signer_title': 'VP Sales'},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(sign.status_code, 200, sign.data)
+
+        detail = self.api.get(f'/api/supplier-agreements/{data["id"]}/', HTTP_HOST=self.host)
+        self.assertEqual(detail.data['status'], 'signed')
+        self.assertEqual(detail.data['signer_name'], 'Jane Vendor')
+        self.assertEqual(detail.data['signer_title'], 'VP Sales')
+        self.assertIsNotNone(detail.data['signed_at'])
+
+    def test_a_draft_agreement_is_not_publicly_reachable(self):
+        data = self._create_agreement()  # never sent
+        anon = APIClient()
+        resp = anon.get(f'/api/public/agreements/{data["access_token"]}/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 404)
+
+    def test_cannot_sign_twice(self):
+        data = self._create_agreement()
+        self.api.post(f'/api/supplier-agreements/{data["id"]}/send/', HTTP_HOST=self.host)
+        token = data['access_token']
+        anon = APIClient()
+        anon.post(f'/api/public/agreements/{token}/', {'signer_name': 'A'}, format='json', HTTP_HOST=self.host)
+        again = anon.post(f'/api/public/agreements/{token}/', {'signer_name': 'B'}, format='json', HTTP_HOST=self.host)
+        self.assertEqual(again.status_code, 400)
+
+    def test_signing_without_a_name_is_rejected(self):
+        data = self._create_agreement()
+        self.api.post(f'/api/supplier-agreements/{data["id"]}/send/', HTTP_HOST=self.host)
+        anon = APIClient()
+        resp = anon.post(
+            f'/api/public/agreements/{data["access_token"]}/', {'signer_name': ''},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_uploaded_file_is_downloadable_via_the_public_token_route(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        create = self.api.post(
+            '/api/supplier-agreements/',
+            {
+                'supplier': self.supplier.id, 'title': 'PDF Agreement',
+                'file': SimpleUploadedFile('agreement.pdf', b'%PDF-1.4 fake', content_type='application/pdf'),
+            },
+            format='multipart', HTTP_HOST=self.host,
+        )
+        self.assertEqual(create.status_code, 201, create.data)
+        self.api.post(f'/api/supplier-agreements/{create.data["id"]}/send/', HTTP_HOST=self.host)
+
+        # The public GET must NOT point at the authenticated download
+        # action (that 403s an external supplier with no account).
+        public = APIClient().get(f'/api/public/agreements/{create.data["access_token"]}/', HTTP_HOST=self.host)
+        self.assertTrue(public.data['file'].startswith('/api/public/agreements/'))
+
+        download = APIClient().get(public.data['file'], HTTP_HOST=self.host)
+        self.assertEqual(download.status_code, 200)
+        content = b''.join(download.streaming_content)
+        self.assertEqual(content, b'%PDF-1.4 fake')
+
 
 class PublicTrustCenterTests(TestCase):
     """The public, no-login Trust Center page — only aggregate figures,

@@ -237,6 +237,124 @@ class TrainingRecordTests(TestCase):
         self.assertEqual(resp.status_code, 200)
 
 
+class TrainingVideoTests(TestCase):
+    """Uploading/publishing a security awareness video and tracking who's
+    watched it — a video's "who's watched this" is just its
+    TrainingRecord assignments, same pattern as everything else in this
+    ISMS (Access Review sits on top of the Access Register, Approval
+    Records sit on top of the Approval Matrix, etc.)."""
+
+    def setUp(self):
+        self.tenant = make_tenant('trainingvideotest')
+        self.host = f'{self.tenant.schema_name}.localhost'
+        self.admin = make_member(self.tenant, 'video_admin', Membership.Role.ADMIN)
+        self.user1 = make_member(self.tenant, 'video_user1', Membership.Role.USER)
+        self.user2 = make_member(self.tenant, 'video_user2', Membership.Role.USER)
+
+    def _upload(self, actor):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        api = APIClient()
+        api.force_authenticate(user=actor)
+        return api, api.post(
+            '/api/training-videos/',
+            {
+                'title': 'September 2026 Awareness', 'period': 'September 2026',
+                'file': SimpleUploadedFile('video.mp4', b'fake mp4 bytes', content_type='video/mp4'),
+            },
+            format='multipart', HTTP_HOST=self.host,
+        )
+
+    def test_admin_can_upload_a_video(self):
+        api, resp = self._upload(self.admin)
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(resp.data['file'], f'/api/training-videos/{resp.data["id"]}/stream/')
+        self.assertEqual(resp.data['pending_count'], 0)
+
+    def test_plain_user_cannot_upload_a_video(self):
+        api, resp = self._upload(self.user1)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_publishing_assigns_every_active_member_and_is_idempotent(self):
+        api, video = self._upload(self.admin)
+        video_id = video.data['id']
+
+        first = api.post(f'/api/training-videos/{video_id}/publish/', HTTP_HOST=self.host)
+        self.assertEqual(first.status_code, 200, first.data)
+        # admin + user1 + user2 = 3 active members.
+        self.assertEqual(first.data['assigned_count'], 3)
+
+        second = api.post(f'/api/training-videos/{video_id}/publish/', HTTP_HOST=self.host)
+        self.assertEqual(second.data['assigned_count'], 0)
+        self.assertEqual(second.data['already_assigned_count'], 3)
+
+        with schema_context(self.tenant.schema_name):
+            from core.models import TrainingRecord
+            self.assertEqual(TrainingRecord.objects.filter(video_id=video_id).count(), 3)
+
+    def test_plain_user_cannot_publish(self):
+        api, video = self._upload(self.admin)
+        user_api = APIClient()
+        user_api.force_authenticate(user=self.user1)
+        resp = user_api.post(f'/api/training-videos/{video.data["id"]}/publish/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_watch_flow_start_then_complete_updates_status_and_counts(self):
+        api, video = self._upload(self.admin)
+        video_id = video.data['id']
+        api.post(f'/api/training-videos/{video_id}/publish/', HTTP_HOST=self.host)
+
+        user1_api = APIClient()
+        user1_api.force_authenticate(user=self.user1)
+        listing = user1_api.get('/api/training-videos/', HTTP_HOST=self.host)
+        my_record_id = listing.data['results'][0]['my_record_id']
+        self.assertEqual(listing.data['results'][0]['my_status'], 'assigned')
+
+        start = user1_api.post(f'/api/training-records/{my_record_id}/start/', HTTP_HOST=self.host)
+        self.assertEqual(start.data['status'], 'in_progress')
+
+        complete = user1_api.post(f'/api/training-records/{my_record_id}/complete/', HTTP_HOST=self.host)
+        self.assertEqual(complete.data['status'], 'completed')
+        self.assertIsNotNone(complete.data['completed_date'])
+
+        counts = api.get('/api/training-videos/', HTTP_HOST=self.host).data['results'][0]
+        self.assertEqual(counts['completed_count'], 1)
+        self.assertEqual(counts['pending_count'], 2)  # admin + user2 still pending
+
+    def test_cannot_start_someone_elses_training_record(self):
+        api, video = self._upload(self.admin)
+        api.post(f'/api/training-videos/{video.data["id"]}/publish/', HTTP_HOST=self.host)
+
+        with schema_context(self.tenant.schema_name):
+            from core.models import TrainingRecord
+            other_record = TrainingRecord.objects.get(video_id=video.data['id'], user=self.user1)
+
+        user2_api = APIClient()
+        user2_api.force_authenticate(user=self.user2)
+        resp = user2_api.post(f'/api/training-records/{other_record.pk}/start/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_streaming_the_video_round_trips_the_uploaded_bytes(self):
+        api, video = self._upload(self.admin)
+        resp = api.get(video.data['file'], HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200)
+        content = b''.join(resp.streaming_content)
+        self.assertEqual(content, b'fake mp4 bytes')
+
+    def test_filtering_training_records_by_video(self):
+        api, video = self._upload(self.admin)
+        video_id = video.data['id']
+        api.post(f'/api/training-videos/{video_id}/publish/', HTTP_HOST=self.host)
+
+        with schema_context(self.tenant.schema_name):
+            from core.models import TrainingRecord
+            TrainingRecord.objects.create(user=self.admin, title='Unrelated cycle')  # no video
+
+        resp = api.get(f'/api/training-records/?video={video_id}', HTTP_HOST=self.host)
+        self.assertEqual(resp.data['count'], 3)
+        self.assertTrue(all(r['video'] == video_id for r in resp.data['results']))
+
+
 class AccessRegisterTests(TestCase):
     def test_membership_listing_includes_access_register_fields(self):
         tenant = make_tenant('accessregtest')

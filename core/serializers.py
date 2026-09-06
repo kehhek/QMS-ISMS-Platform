@@ -1,9 +1,10 @@
 from rest_framework import serializers
 
 from .models import (
-    Document, DocumentRevision, Risk, Supplier, SupplierQuestionnaire, Control, Incident, Audit,
-    CorrectiveAction, Evidence, Workflow, WorkflowStep, AuditLog, ElectronicSignature, TrainingRecord,
-    Asset, Nonconformance, ApprovalMatrixRule, ApprovalRecord, CalendarEvent,
+    Document, DocumentRevision, Risk, Supplier, SupplierQuestionnaire, SupplierAgreement, Control,
+    Incident, Audit, CorrectiveAction, Evidence, Workflow, WorkflowStep, AuditLog, ElectronicSignature,
+    TrainingRecord, TrainingVideo,
+    Asset, AssetReview, Nonconformance, ApprovalMatrixRule, ApprovalRecord, CalendarEvent,
 )
 
 
@@ -19,16 +20,35 @@ class CalendarEventSerializer(serializers.ModelSerializer):
         read_only_fields = ('created_by', 'created_at', 'updated_at')
 
 
+class AssetReviewSerializer(serializers.ModelSerializer):
+    reviewed_by_username = serializers.CharField(source='reviewed_by.username', read_only=True, default=None)
+
+    class Meta:
+        model = AssetReview
+        fields = ('id', 'asset', 'reviewed_by', 'reviewed_by_username', 'reviewed_at', 'outcome', 'notes')
+        read_only_fields = ('reviewed_by', 'reviewed_at')
+
+
 class AssetSerializer(serializers.ModelSerializer):
     owner_username = serializers.CharField(source='owner.username', read_only=True, default=None)
+    # The last completed review, if any — same "the register alone isn't
+    # the evidence, a dated review of it is" pattern as Membership's
+    # last_review (tenants/serializers.py).
+    last_review = serializers.SerializerMethodField()
 
     class Meta:
         model = Asset
         fields = (
             'id', 'asset_id', 'name', 'description', 'asset_type', 'sensitivity', 'status',
-            'owner', 'owner_username', 'created_at', 'updated_at',
+            'owner', 'owner_username', 'last_review', 'created_at', 'updated_at',
         )
         read_only_fields = ('created_at', 'updated_at')
+
+    def get_last_review(self, obj):
+        review = obj.reviews.first()  # AssetReview.Meta.ordering = ['-reviewed_at']
+        if not review:
+            return None
+        return AssetReviewSerializer(review).data
 
 
 class DocumentRevisionSerializer(serializers.ModelSerializer):
@@ -100,6 +120,7 @@ class SupplierQuestionnaireSerializer(serializers.ModelSerializer):
     supplier_name = serializers.CharField(source='supplier.name', read_only=True)
     sent_by_username = serializers.CharField(source='sent_by.username', read_only=True, default=None)
     reviewed_by_username = serializers.CharField(source='reviewed_by.username', read_only=True, default=None)
+    decided_by_username = serializers.CharField(source='decided_by.username', read_only=True, default=None)
     question_count = serializers.SerializerMethodField()
 
     class Meta:
@@ -107,20 +128,51 @@ class SupplierQuestionnaireSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'supplier', 'supplier_name', 'title', 'questions', 'question_count', 'status',
             'access_token', 'sent_at', 'sent_by', 'sent_by_username', 'responses', 'responded_at',
-            'reviewed_at', 'reviewed_by', 'reviewed_by_username', 'created_at', 'updated_at',
+            'reviewed_at', 'reviewed_by', 'reviewed_by_username', 'decided_at', 'decided_by',
+            'decided_by_username', 'created_at', 'updated_at',
         )
-        # status/sent_*/responses/responded_at/reviewed_* only ever change
-        # via the send/review actions or the supplier's own public
-        # response — never a direct PATCH (same reasoning as Document's
-        # status field: a plain PATCH here would let an admin fabricate a
-        # "responded" questionnaire without the supplier ever answering).
+        # status/sent_*/responses/responded_at/reviewed_*/decided_* only
+        # ever change via the send/review/approve/reject actions or the
+        # supplier's own public response — never a direct PATCH (same
+        # reasoning as Document's status field: a plain PATCH here would
+        # let an admin fabricate a "responded"/"approved" questionnaire
+        # without the supplier ever answering or a real decision made).
         read_only_fields = (
             'status', 'access_token', 'sent_at', 'sent_by', 'responses', 'responded_at',
-            'reviewed_at', 'reviewed_by', 'created_at', 'updated_at',
+            'reviewed_at', 'reviewed_by', 'decided_at', 'decided_by', 'created_at', 'updated_at',
         )
 
     def get_question_count(self, obj):
         return len(obj.questions or [])
+
+
+class SupplierAgreementSerializer(serializers.ModelSerializer):
+    supplier_name = serializers.CharField(source='supplier.name', read_only=True)
+    sent_by_username = serializers.CharField(source='sent_by.username', read_only=True, default=None)
+    created_by_username = serializers.CharField(source='created_by.username', read_only=True, default=None)
+
+    class Meta:
+        model = SupplierAgreement
+        fields = (
+            'id', 'supplier', 'supplier_name', 'questionnaire', 'title', 'content', 'file', 'status',
+            'access_token', 'sent_at', 'sent_by', 'sent_by_username', 'signed_at', 'signer_name',
+            'signer_title', 'created_by', 'created_by_username', 'created_at',
+        )
+        # status/sent_*/signed_*/signer_* only ever change via the send
+        # action or the supplier's own public signature — never a direct
+        # PATCH, same reasoning as SupplierQuestionnaire's read-only set.
+        read_only_fields = (
+            'status', 'access_token', 'sent_at', 'sent_by', 'signed_at', 'signer_name',
+            'signer_title', 'created_by', 'created_at',
+        )
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if instance.file:
+            # Same reasoning as Document/Evidence: point at our own
+            # authenticated download action, never a raw storage URL.
+            data['file'] = f'/api/supplier-agreements/{instance.pk}/download/'
+        return data
 
 
 class ControlSerializer(serializers.ModelSerializer):
@@ -239,14 +291,74 @@ class EvidenceSerializer(serializers.ModelSerializer):
         return data
 
 
+class TrainingVideoSerializer(serializers.ModelSerializer):
+    created_by_username = serializers.CharField(source='created_by.username', read_only=True, default=None)
+    my_status = serializers.SerializerMethodField()
+    my_record_id = serializers.SerializerMethodField()
+    pending_count = serializers.SerializerMethodField()
+    in_progress_count = serializers.SerializerMethodField()
+    completed_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TrainingVideo
+        fields = (
+            'id', 'title', 'description', 'file', 'period', 'created_by', 'created_by_username',
+            'created_at', 'my_status', 'my_record_id', 'pending_count', 'in_progress_count', 'completed_count',
+        )
+        read_only_fields = ('created_by', 'created_at')
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if instance.file:
+            # Same reasoning as Document/Evidence: point at our own
+            # authenticated stream action, never a raw storage URL.
+            data['file'] = f'/api/training-videos/{instance.pk}/stream/'
+        return data
+
+    def _assignments(self, obj):
+        # Cached on the instance per-request: my_status/pending_count/
+        # in_progress_count/completed_count would otherwise each run
+        # their own query over `assignments` for every video row.
+        if not hasattr(obj, '_cached_assignments'):
+            obj._cached_assignments = list(obj.assignments.all())
+        return obj._cached_assignments
+
+    def _count(self, obj, status_value):
+        return sum(1 for a in self._assignments(obj) if a.status == status_value)
+
+    def get_pending_count(self, obj):
+        return self._count(obj, 'assigned')
+
+    def get_in_progress_count(self, obj):
+        return self._count(obj, 'in_progress')
+
+    def get_completed_count(self, obj):
+        return self._count(obj, 'completed')
+
+    def _my_assignment(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return None
+        return next((a for a in self._assignments(obj) if a.user_id == request.user.id), None)
+
+    def get_my_status(self, obj):
+        assignment = self._my_assignment(obj)
+        return assignment.status if assignment else None
+
+    def get_my_record_id(self, obj):
+        assignment = self._my_assignment(obj)
+        return assignment.id if assignment else None
+
+
 class TrainingRecordSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source='user.username', read_only=True)
+    video_title = serializers.CharField(source='video.title', read_only=True, default=None)
     is_overdue = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = TrainingRecord
         fields = (
-            'id', 'user', 'username', 'title', 'status', 'assigned_date',
+            'id', 'user', 'username', 'video', 'video_title', 'title', 'status', 'assigned_date',
             'due_date', 'completed_date', 'notes', 'is_overdue', 'created_at', 'updated_at',
         )
         read_only_fields = ('assigned_date', 'created_at', 'updated_at')

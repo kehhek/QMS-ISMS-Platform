@@ -55,6 +55,8 @@ function QuestionnairesSection({ supplierId, token }) {
   const [items, setItems] = useState(null)
   const [error, setError] = useState(null)
   const [expandedResponses, setExpandedResponses] = useState(null)
+  const [editingId, setEditingId] = useState(null)
+  const [editText, setEditText] = useState('')
 
   const load = () => {
     apiFetch(`/supplier-questionnaires/?supplier=${supplierId}`, token)
@@ -73,8 +75,34 @@ function QuestionnairesSection({ supplierId, token }) {
       .catch((err) => setError(err.message))
   }
 
+  const startEditQuestions = (q) => {
+    setEditingId(q.id)
+    setEditText(q.questions.join('\n'))
+  }
+
+  const saveQuestions = (q) => {
+    const questions = editText.split('\n').map((line) => line.trim()).filter(Boolean)
+    if (!questions.length) {
+      setError('Add at least one question (one per line).')
+      return
+    }
+    apiFetch(`/supplier-questionnaires/${q.id}/`, token, { method: 'PATCH', body: JSON.stringify({ questions }) })
+      .then(() => { setError(null); setEditingId(null); load() })
+      .catch((err) => setError(err.message))
+  }
+
   const review = (q) => {
     apiFetch(`/supplier-questionnaires/${q.id}/review/`, token, { method: 'POST' })
+      .then(() => { setError(null); load() })
+      .catch((err) => setError(err.message))
+  }
+
+  const decide = (q, decision) => {
+    if (decision === 'reject') {
+      // eslint-disable-next-line no-alert
+      if (!window.confirm(`Reject "${q.supplier_name || 'this supplier'}" based on this questionnaire? They'll be emailed.`)) return
+    }
+    apiFetch(`/supplier-questionnaires/${q.id}/${decision}/`, token, { method: 'POST' })
       .then(() => { setError(null); load() })
       .catch((err) => setError(err.message))
   }
@@ -113,6 +141,11 @@ function QuestionnairesSection({ supplierId, token }) {
                   <td>{q.sent_at ? new Date(q.sent_at).toLocaleString() : '—'}</td>
                   <td>{q.responded_at ? new Date(q.responded_at).toLocaleString() : '—'}</td>
                   <td>
+                    {q.status === 'draft' && (
+                      <button onClick={() => startEditQuestions(q)} style={{ marginRight: 4 }}>
+                        Edit questions
+                      </button>
+                    )}
                     <button onClick={() => send(q)} style={{ marginRight: 4 }}>
                       {q.status === 'draft' ? 'Send' : 'Resend'}
                     </button>
@@ -125,10 +158,39 @@ function QuestionnairesSection({ supplierId, token }) {
                       </button>
                     )}
                     {q.status === 'responded' && (
-                      <button onClick={() => review(q)}>Mark reviewed</button>
+                      <button onClick={() => review(q)} style={{ marginRight: 4 }}>Mark reviewed</button>
+                    )}
+                    {(q.status === 'responded' || q.status === 'reviewed') && (
+                      <>
+                        <button onClick={() => decide(q, 'approve')} style={{ marginRight: 4 }}>Approve</button>
+                        <button onClick={() => decide(q, 'reject')}>Reject</button>
+                      </>
                     )}
                   </td>
                 </tr>
+                {q.decided_at && (
+                  <tr>
+                    <td colSpan={6} style={{ fontSize: 12, color: 'var(--color-text-muted)', paddingTop: 0 }}>
+                      {q.status === 'approved' ? 'Approved' : 'Rejected'} by {q.decided_by_username || 'system'} on{' '}
+                      {new Date(q.decided_at).toLocaleString()}
+                    </td>
+                  </tr>
+                )}
+                {editingId === q.id && (
+                  <tr>
+                    <td colSpan={6} style={{ background: 'var(--color-bg)' }}>
+                      <textarea
+                        value={editText}
+                        onChange={(e) => setEditText(e.target.value)}
+                        style={{ width: '100%', minHeight: 90, fontFamily: 'inherit', marginTop: 8 }}
+                      />
+                      <div style={{ marginTop: 6 }}>
+                        <button onClick={() => saveQuestions(q)} style={{ marginRight: 4 }}>Save</button>
+                        <button onClick={() => setEditingId(null)}>Cancel</button>
+                      </div>
+                    </td>
+                  </tr>
+                )}
                 {expandedResponses === q.id && (
                   <tr>
                     <td colSpan={6} style={{ background: 'var(--color-bg)' }}>
@@ -145,6 +207,121 @@ function QuestionnairesSection({ supplierId, token }) {
                   </tr>
                 )}
               </React.Fragment>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  )
+}
+
+function AgreementForm({ supplierId, token, onCreated }) {
+  const [title, setTitle] = useState('')
+  const [content, setContent] = useState('')
+  const [file, setFile] = useState(null)
+  const [error, setError] = useState(null)
+
+  const submit = (e) => {
+    e.preventDefault()
+    if (!content.trim() && !file) {
+      setError('Add agreement text or attach a file.')
+      return
+    }
+    const body = new FormData()
+    body.append('supplier', supplierId)
+    body.append('title', title)
+    if (content.trim()) body.append('content', content)
+    if (file) body.append('file', file)
+    apiFetch('/supplier-agreements/', token, { method: 'POST', body })
+      .then(() => {
+        setTitle('')
+        setContent('')
+        setFile(null)
+        setError(null)
+        onCreated()
+      })
+      .catch((err) => setError(err.message))
+  }
+
+  return (
+    <form onSubmit={submit} className="toolbar" style={{ flexWrap: 'wrap', marginBottom: 12 }}>
+      {error && <p className="error-text" style={{ width: '100%' }}>{error}</p>}
+      <input
+        placeholder="Agreement title (e.g. Vendor Agreement 2026)"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        style={{ width: 260 }}
+        required
+      />
+      <textarea
+        placeholder="Agreement text (optional if attaching a file)"
+        value={content}
+        onChange={(e) => setContent(e.target.value)}
+        style={{ width: '100%', minHeight: 70, fontFamily: 'inherit' }}
+      />
+      <input type="file" accept="application/pdf" onChange={(e) => setFile(e.target.files[0])} />
+      <button type="submit" className="btn-primary">Create agreement</button>
+    </form>
+  )
+}
+
+function AgreementsSection({ supplierId, token }) {
+  const [items, setItems] = useState(null)
+  const [error, setError] = useState(null)
+
+  const load = () => {
+    apiFetch(`/supplier-agreements/?supplier=${supplierId}`, token)
+      .then((data) => setItems(unwrapList(data)))
+      .catch((err) => setError(err.message))
+  }
+
+  useEffect(() => {
+    load()
+    // eslint-disable-next-line
+  }, [])
+
+  const send = (a) => {
+    apiFetch(`/supplier-agreements/${a.id}/send/`, token, { method: 'POST' })
+      .then(() => { setError(null); load() })
+      .catch((err) => setError(err.message))
+  }
+
+  return (
+    <div style={{ padding: '10px 4px' }}>
+      {error && <p className="error-text">{error}</p>}
+      <p className="panel-hint">
+        Once you've approved a supplier above, send them an agreement to sign — same one-time,
+        no-account link as the questionnaire. Signing captures their typed name/title and a timestamp.
+      </p>
+      <AgreementForm supplierId={supplierId} token={token} onCreated={load} />
+      {items === null ? (
+        <p className="empty-state">Loading…</p>
+      ) : items.length === 0 ? (
+        <p className="empty-state">No agreements yet for this supplier.</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Status</th>
+              <th>Sent</th>
+              <th>Signed by</th>
+              <th>Signed at</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((a) => (
+              <tr key={a.id}>
+                <td>{a.title}</td>
+                <td><StatusBadge value={a.status} /></td>
+                <td>{a.sent_at ? new Date(a.sent_at).toLocaleString() : '—'}</td>
+                <td>{a.signer_name ? `${a.signer_name}${a.signer_title ? ` (${a.signer_title})` : ''}` : '—'}</td>
+                <td>{a.signed_at ? new Date(a.signed_at).toLocaleString() : '—'}</td>
+                <td>
+                  <button onClick={() => send(a)}>{a.status === 'draft' ? 'Send' : 'Resend'}</button>
+                </td>
+              </tr>
             ))}
           </tbody>
         </table>
@@ -320,6 +497,8 @@ export default function SupplierPanel({ token }) {
                   <tr>
                     <td colSpan={7} style={{ background: 'var(--color-bg)' }}>
                       <QuestionnairesSection supplierId={s.id} token={token} />
+                      <hr style={{ border: 'none', borderTop: '1px solid var(--color-border)', margin: '16px 0' }} />
+                      <AgreementsSection supplierId={s.id} token={token} />
                     </td>
                   </tr>
                 )}

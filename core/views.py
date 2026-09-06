@@ -1,3 +1,5 @@
+import datetime
+
 from django.conf import settings
 from django.contrib.contenttypes.models import ContentType
 from django.db.models import Count
@@ -19,17 +21,18 @@ from .calendar import get_isms_calendar_events
 from .export import CsvExportMixin
 from .signatures import create_signature
 from .models import (
-    Document, DocumentRevision, Risk, Supplier, SupplierQuestionnaire, Control, Incident, Audit,
-    CorrectiveAction, Evidence, Workflow, WorkflowStep, AuditLog, ElectronicSignature, TrainingRecord,
-    Asset, Nonconformance, ApprovalMatrixRule, ApprovalRecord, CalendarEvent,
+    Document, DocumentRevision, Risk, Supplier, SupplierQuestionnaire, SupplierAgreement, Control,
+    Incident, Audit, CorrectiveAction, Evidence, Workflow, WorkflowStep, AuditLog, ElectronicSignature,
+    TrainingRecord, TrainingVideo, Asset, AssetReview, Nonconformance, ApprovalMatrixRule,
+    ApprovalRecord, CalendarEvent,
 )
 from .serializers import (
     DocumentSerializer, DocumentRevisionSerializer, RiskSerializer, SupplierSerializer,
-    SupplierQuestionnaireSerializer, ControlSerializer,
+    SupplierQuestionnaireSerializer, SupplierAgreementSerializer, ControlSerializer,
     IncidentSerializer, AuditSerializer, CorrectiveActionSerializer, EvidenceSerializer,
     WorkflowSerializer, WorkflowStepSerializer, AuditLogSerializer, ElectronicSignatureSerializer,
-    TrainingRecordSerializer, AssetSerializer, NonconformanceSerializer, CalendarEventSerializer,
-    ApprovalMatrixRuleSerializer, ApprovalRecordSerializer,
+    TrainingRecordSerializer, TrainingVideoSerializer, AssetSerializer, AssetReviewSerializer, NonconformanceSerializer,
+    CalendarEventSerializer, ApprovalMatrixRuleSerializer, ApprovalRecordSerializer,
 )
 
 
@@ -43,8 +46,8 @@ class AuditLoggingMixin:
     user and would silently miss every token-authenticated API call.
     """
 
-    def _log(self, action_name, instance):
-        log_action(self.request.user, action_name, instance)
+    def _log(self, action_name, instance, metadata=None):
+        log_action(self.request.user, action_name, instance, metadata=metadata)
 
     def perform_create(self, serializer):
         instance = serializer.save()
@@ -246,6 +249,45 @@ class AssetViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
         self._log(AuditLog.Action.DELETE, instance)
         instance.delete()
 
+    @action(detail=True, methods=['post'])
+    def review(self, request, pk=None):
+        """Records a completed review of this asset — ISO 27001 A.5.9
+        asset inventory maintenance made into actual evidence (a dated,
+        attributed AssetReview row), not just an unreviewed register.
+        Same admin/auditor tier as editing an asset — same reasoning as
+        MembershipViewSet.review() (tenants/views.py), which this
+        mirrors."""
+        if get_role(request.user) not in ('admin', 'auditor') and not request.user.is_superuser:
+            raise PermissionDenied('Only admins/auditors can record an asset review.')
+
+        asset = self.get_object()
+        outcome = request.data.get('outcome', AssetReview.Outcome.CONFIRMED)
+        if outcome not in AssetReview.Outcome.values:
+            return Response(
+                {'outcome': [f'Must be one of: {", ".join(AssetReview.Outcome.values)}.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        AssetReview.objects.create(
+            asset=asset, reviewed_by=request.user, outcome=outcome, notes=request.data.get('notes', ''),
+        )
+        self._log(AuditLog.Action.UPDATE, asset, metadata={'asset_review': outcome})
+        return Response(AssetSerializer(asset).data, status=status.HTTP_201_CREATED)
+
+
+class AssetReviewViewSet(CsvExportMixin, viewsets.ReadOnlyModelViewSet):
+    """Read-only history of every completed asset review — the evidence
+    trail for ISO 27001 A.5.9, exportable for an auditor. Same visibility
+    tier as AccessReviewViewSet/AuditLogViewSet (admin/auditor only),
+    since this is that same kind of control-evidence record."""
+
+    serializer_class = AssetReviewSerializer
+    permission_classes = [HasTenantRoleStrict]
+    allowed_roles = ['admin', 'auditor']
+
+    def get_queryset(self):
+        return AssetReview.objects.select_related('asset', 'reviewed_by').all()
+
 
 class RiskViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
     queryset = Risk.objects.select_related('asset').all()
@@ -347,6 +389,217 @@ class SupplierQuestionnaireViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.M
         questionnaire.save(update_fields=['status', 'reviewed_at', 'reviewed_by'])
         log_action(request.user, AuditLog.Action.UPDATE, questionnaire, metadata={'action': 'reviewed'})
         return Response(SupplierQuestionnaireSerializer(questionnaire).data)
+
+    def _decide(self, request, outcome_status, email_subject, email_body):
+        questionnaire = self.get_object()
+        if questionnaire.status not in (SupplierQuestionnaire.Status.RESPONDED, SupplierQuestionnaire.Status.REVIEWED):
+            return Response(
+                {'detail': 'Only a questionnaire the supplier has responded to can be approved or rejected.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        questionnaire.status = outcome_status
+        questionnaire.decided_at = timezone.now()
+        questionnaire.decided_by = request.user
+        questionnaire.save(update_fields=['status', 'decided_at', 'decided_by'])
+
+        email_sent = False
+        if questionnaire.supplier.contact_email:
+            email_sent = send_notification_email(
+                subject=email_subject, message=email_body, recipient_list=[questionnaire.supplier.contact_email],
+            )
+        log_action(
+            request.user, AuditLog.Action.UPDATE, questionnaire,
+            metadata={'action': outcome_status, 'email_sent': email_sent},
+        )
+        return Response(SupplierQuestionnaireSerializer(questionnaire).data)
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        """The due-diligence decision point: approves the supplier based
+        on their questionnaire responses. Also flips the Supplier's own
+        status to Active — "we've decided to move forward with them" —
+        and emails them the good news. Sending a signable agreement
+        afterward is a separate, deliberate step (see SupplierAgreement),
+        not automatic, so an admin can pick/customize the agreement
+        rather than one being fired off sight-unseen."""
+        questionnaire = self.get_object()
+        resp = self._decide(
+            request, SupplierQuestionnaire.Status.APPROVED,
+            f'You have been approved: {questionnaire.title}',
+            (
+                f'Hello {questionnaire.supplier.contact_name or questionnaire.supplier.name},\n\n'
+                f'Good news — based on your responses to "{questionnaire.title}", we have decided to move '
+                'forward with you as a supplier. We will be in touch shortly with next steps.'
+            ),
+        )
+        if resp.status_code == 200:
+            questionnaire.supplier.status = Supplier.Status.ACTIVE
+            questionnaire.supplier.save(update_fields=['status'])
+        return resp
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        """The other side of the same decision point — see approve()."""
+        questionnaire = self.get_object()
+        return self._decide(
+            request, SupplierQuestionnaire.Status.REJECTED,
+            f'Update on your submission: {questionnaire.title}',
+            (
+                f'Hello {questionnaire.supplier.contact_name or questionnaire.supplier.name},\n\n'
+                f'Thank you for completing "{questionnaire.title}". After review, we will not be moving '
+                'forward with you as a supplier at this time.'
+            ),
+        )
+
+
+class SupplierAgreementViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
+    """A vendor agreement sent for e-signature once a supplier is
+    approved — same permission tier and no-account public-link pattern as
+    SupplierQuestionnaireViewSet (see its docstring and `send`)."""
+
+    serializer_class = SupplierAgreementSerializer
+    permission_classes = [HasTenantRole]
+    allowed_roles = ['admin', 'user']
+
+    def get_queryset(self):
+        qs = SupplierAgreement.objects.select_related('supplier', 'sent_by', 'created_by').all()
+        supplier_id = self.request.query_params.get('supplier')
+        if supplier_id:
+            qs = qs.filter(supplier_id=supplier_id)
+        return qs
+
+    def perform_create(self, serializer):
+        instance = serializer.save(created_by=self.request.user)
+        self._log(AuditLog.Action.CREATE, instance)
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        self._log(AuditLog.Action.UPDATE, instance)
+
+    @action(detail=True, methods=['post'])
+    def send(self, request, pk=None):
+        agreement = self.get_object()
+        if not agreement.supplier.contact_email:
+            return Response(
+                {'detail': 'This supplier has no contact email on file — add one first.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not agreement.content and not agreement.file:
+            return Response({'detail': 'Add agreement text or attach a file before sending.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        base_url = settings.FRONTEND_BASE_URL or request.build_absolute_uri('/').rstrip('/')
+        link = f'{base_url}/agreement/{agreement.access_token}'
+
+        sent = send_notification_email(
+            subject=f'Please sign: {agreement.title}',
+            message=(
+                f'Hello {agreement.supplier.contact_name or agreement.supplier.name},\n\n'
+                f'Please review and sign the following agreement: {agreement.title}\n\n'
+                f'{link}\n\n'
+                'No account is required — the link above is all you need.'
+            ),
+            recipient_list=[agreement.supplier.contact_email],
+        )
+        if not agreement.sent_at:
+            agreement.sent_at = timezone.now()
+        agreement.status = SupplierAgreement.Status.SENT
+        agreement.sent_by = request.user
+        agreement.save(update_fields=['status', 'sent_at', 'sent_by'])
+        log_action(request.user, AuditLog.Action.UPDATE, agreement, metadata={'action': 'sent', 'email_sent': sent})
+        return Response(SupplierAgreementSerializer(agreement).data)
+
+    @action(detail=True, methods=['get'])
+    def download(self, request, pk=None):
+        """Streams the attached agreement file, if any, through our own
+        authentication — same reasoning as Document/Evidence's download."""
+        from django.http import FileResponse
+
+        agreement = self.get_object()
+        if not agreement.file:
+            return Response({'detail': 'This agreement has no attached file.'}, status=status.HTTP_404_NOT_FOUND)
+        return FileResponse(
+            agreement.file.open('rb'), as_attachment=True,
+            filename=agreement.file.name.rsplit('/', 1)[-1],
+        )
+
+
+class PublicAgreementView(APIView):
+    """Lets a supplier open and sign an agreement with no account of
+    their own — same pattern as PublicQuestionnaireView. The "signature"
+    is a typed name/title, not the internal ElectronicSignature model,
+    which requires a real user account and password re-verification an
+    external supplier doesn't have."""
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'agreement-public'
+
+    def get(self, request, token):
+        agreement = SupplierAgreement.objects.filter(access_token=token).select_related('supplier').first()
+        if not agreement or agreement.status == SupplierAgreement.Status.DRAFT:
+            return Response({'detail': 'This agreement link is not valid.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({
+            'title': agreement.title,
+            'supplier_name': agreement.supplier.name,
+            'content': agreement.content,
+            # The token-keyed public file route below, NOT
+            # SupplierAgreementViewSet.download — that action requires an
+            # authenticated tenant member and would 403 an external
+            # supplier with no account at all.
+            'file': f'/api/public/agreements/{token}/file/' if agreement.file else None,
+            'already_signed': agreement.status == SupplierAgreement.Status.SIGNED,
+            'signer_name': agreement.signer_name,
+            'signer_title': agreement.signer_title,
+            'signed_at': agreement.signed_at,
+        })
+
+    def post(self, request, token):
+        agreement = SupplierAgreement.objects.filter(access_token=token).first()
+        if not agreement or agreement.status == SupplierAgreement.Status.DRAFT:
+            return Response({'detail': 'This agreement link is not valid.'}, status=status.HTTP_404_NOT_FOUND)
+        if agreement.status == SupplierAgreement.Status.SIGNED:
+            return Response({'detail': 'This agreement has already been signed.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        signer_name = (request.data.get('signer_name') or '').strip()
+        if not signer_name:
+            return Response({'signer_name': ['Type your full name to sign.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        agreement.signer_name = signer_name
+        agreement.signer_title = (request.data.get('signer_title') or '').strip()
+        agreement.status = SupplierAgreement.Status.SIGNED
+        agreement.signed_at = timezone.now()
+        agreement.save(update_fields=['signer_name', 'signer_title', 'status', 'signed_at'])
+        log_action(
+            None, AuditLog.Action.UPDATE, agreement,
+            metadata={'action': 'supplier_signed', 'supplier': agreement.supplier.name, 'signer_name': signer_name},
+        )
+        return Response({'ok': True})
+
+
+class PublicAgreementFileView(APIView):
+    """Streams an agreement's attached file to the supplier signing it —
+    a separate, token-keyed route from SupplierAgreementViewSet.download
+    (which requires an authenticated tenant member) since the supplier
+    viewing this has no account at all. The access_token is still the
+    only way in — an invalid/unknown token gets the same 404 as an
+    invalid questionnaire/agreement link."""
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'agreement-public'
+
+    def get(self, request, token):
+        from django.http import FileResponse
+
+        agreement = SupplierAgreement.objects.filter(access_token=token).first()
+        if not agreement or agreement.status == SupplierAgreement.Status.DRAFT or not agreement.file:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return FileResponse(
+            agreement.file.open('rb'), as_attachment=True,
+            filename=agreement.file.name.rsplit('/', 1)[-1],
+        )
 
 
 class PublicQuestionnaireView(APIView):
@@ -591,6 +844,89 @@ class WorkflowViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
         self._log(AuditLog.Action.CREATE, instance)
 
 
+class TrainingVideoViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
+    """Security awareness training videos (ISO 27001 A.6.3) — e.g. this
+    month's video. Any tenant member reads/streams; uploading and
+    publishing is admin/auditor only, same tier as assigning a plain
+    TrainingRecord — enforced explicitly below rather than a blanket
+    `allowed_roles`, same reasoning as TrainingRecordViewSet itself."""
+
+    queryset = TrainingVideo.objects.select_related('created_by').prefetch_related('assignments').all()
+    serializer_class = TrainingVideoSerializer
+    permission_classes = [HasTenantRole]
+
+    def _require_admin_or_auditor(self, request):
+        if request.user.is_superuser:
+            return
+        if get_role(request.user) not in ('admin', 'auditor'):
+            raise PermissionDenied('Only admins/auditors can upload or manage training videos.')
+
+    def perform_create(self, serializer):
+        self._require_admin_or_auditor(self.request)
+        instance = serializer.save(created_by=self.request.user)
+        self._log(AuditLog.Action.CREATE, instance)
+
+    def perform_update(self, serializer):
+        self._require_admin_or_auditor(self.request)
+        instance = serializer.save()
+        self._log(AuditLog.Action.UPDATE, instance)
+
+    def perform_destroy(self, instance):
+        self._require_admin_or_auditor(self.request)
+        self._log(AuditLog.Action.DELETE, instance)
+        instance.delete()
+
+    @action(detail=True, methods=['post'])
+    def publish(self, request, pk=None):
+        """Pushes this video out — creates a Pending TrainingRecord,
+        linked to this video, for every active member of the tenant who
+        doesn't already have one. Safe to call again later (e.g. after
+        new members join): it only fills in the gaps, never touches an
+        existing assignment's progress."""
+        self._require_admin_or_auditor(request)
+        from tenants.models import Membership
+        from django.db import connection as _connection
+
+        video = self.get_object()
+        tenant = getattr(_connection, 'tenant', None)
+        due_date = timezone.now().date() + datetime.timedelta(days=30)
+
+        memberships = Membership.objects.filter(tenant=tenant, user__is_active=True).select_related('user')
+        already_assigned_user_ids = set(video.assignments.values_list('user_id', flat=True))
+        created = 0
+        for membership in memberships:
+            if membership.user_id in already_assigned_user_ids:
+                continue
+            # get_or_create (not a plain create()) as a second guard
+            # against the same (user, video) pair — the unique_together
+            # on TrainingRecord backs this up against a concurrent
+            # double-publish even though already_assigned_user_ids
+            # already excludes the common case.
+            _record, record_created = TrainingRecord.objects.get_or_create(
+                user=membership.user, video=video, defaults={'title': video.title, 'due_date': due_date},
+            )
+            if record_created:
+                created += 1
+
+        log_action(request.user, AuditLog.Action.UPDATE, video, metadata={'action': 'published', 'assigned_count': created})
+        return Response({'assigned_count': created, 'already_assigned_count': len(already_assigned_user_ids)})
+
+    @action(detail=True, methods=['get'])
+    def stream(self, request, pk=None):
+        """Streams the video back through our own authentication and
+        RBAC — same reasoning as Document/Evidence's download actions.
+        `as_attachment=False` (unlike those) so a <video> tag can play it
+        inline instead of the browser offering to save it as a file."""
+        from django.http import FileResponse
+        import mimetypes
+
+        video = self.get_object()
+        if not video.file:
+            return Response({'detail': 'This video has no file attached.'}, status=status.HTTP_404_NOT_FOUND)
+        content_type, _ = mimetypes.guess_type(video.file.name)
+        return FileResponse(video.file.open('rb'), content_type=content_type or 'video/mp4')
+
+
 class TrainingRecordViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
     """Security awareness training tracking (ISO 27001 A.6.3). Any tenant
     member can read (visibility into who's trained is part of the point
@@ -605,9 +941,18 @@ class TrainingRecordViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelVie
     perform_create/update/destroy below.
     """
 
-    queryset = TrainingRecord.objects.select_related('user').all()
     serializer_class = TrainingRecordSerializer
     permission_classes = [HasTenantRole]
+
+    def get_queryset(self):
+        # ?video= lets a video's own "who's watched this" table filter
+        # down to just its own assignments, same pattern as Document's
+        # ?category= / ?status=.
+        qs = TrainingRecord.objects.select_related('user', 'video').all()
+        video_id = self.request.query_params.get('video')
+        if video_id:
+            qs = qs.filter(video_id=video_id)
+        return qs
 
     def _require_admin_or_auditor(self, request):
         if request.user.is_superuser:
@@ -629,6 +974,22 @@ class TrainingRecordViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelVie
         self._require_admin_or_auditor(self.request)
         self._log(AuditLog.Action.DELETE, instance)
         instance.delete()
+
+    @action(detail=True, methods=['post'])
+    def start(self, request, pk=None):
+        """Marks a Pending assignment In progress — called when the
+        trainee actually opens the video player, so "in progress" means
+        something real instead of every assignment silently skipping
+        straight from Pending to Completed."""
+        record = self.get_object()
+        if record.user_id != request.user.pk and not request.user.is_superuser:
+            if get_role(request.user) not in ('admin', 'auditor'):
+                raise PermissionDenied('You can only start your own training record.')
+        if record.status == TrainingRecord.Status.ASSIGNED:
+            record.status = TrainingRecord.Status.IN_PROGRESS
+            record.save(update_fields=['status', 'updated_at'])
+            self._log(AuditLog.Action.UPDATE, record)
+        return Response(TrainingRecordSerializer(record).data)
 
     @action(detail=True, methods=['post'])
     def complete(self, request, pk=None):

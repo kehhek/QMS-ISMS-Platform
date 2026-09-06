@@ -203,6 +203,9 @@ REST_FRAMEWORK = {
         # Public supplier questionnaire response page — the access_token
         # IS the credential, so this also slows down token-guessing.
         'questionnaire-public': '30/hour',
+        # Public supplier agreement e-signature page — same
+        # token-is-the-credential reasoning as questionnaire-public.
+        'agreement-public': '30/hour',
         # Public Trust Center page — cheap aggregate read, but still worth
         # a floor above the general anon rate to deter scraping.
         'trust-center-public': '60/hour',

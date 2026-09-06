@@ -1,8 +1,9 @@
 from django.contrib import admin
 from .models import (
-    Document, DocumentRevision, Risk, Supplier, SupplierQuestionnaire, Control, Incident, Audit,
+    Document, DocumentRevision, Risk, Supplier, SupplierQuestionnaire, SupplierAgreement, Control, Incident, Audit,
     CorrectiveAction, Evidence, Workflow, WorkflowStep, AuditLog, ElectronicSignature, TrainingRecord,
-    Asset, Nonconformance, ApprovalMatrixRule, ApprovalRecord, CalendarEvent,
+    TrainingVideo,
+    Asset, AssetReview, Nonconformance, ApprovalMatrixRule, ApprovalRecord, CalendarEvent,
 )
 
 
@@ -42,6 +43,13 @@ class AssetAdmin(admin.ModelAdmin):
     search_fields = ('asset_id', 'name', 'description')
 
 
+@admin.register(AssetReview)
+class AssetReviewAdmin(admin.ModelAdmin):
+    list_display = ('asset', 'outcome', 'reviewed_by', 'reviewed_at')
+    list_filter = ('outcome',)
+    search_fields = ('asset__name', 'asset__asset_id')
+
+
 @admin.register(Risk)
 class RiskAdmin(admin.ModelAdmin):
     list_display = ('name', 'status', 'likelihood', 'impact', 'owner', 'asset', 'target_date', 'created_at')
@@ -58,9 +66,17 @@ class SupplierAdmin(admin.ModelAdmin):
 
 @admin.register(SupplierQuestionnaire)
 class SupplierQuestionnaireAdmin(admin.ModelAdmin):
-    list_display = ('title', 'supplier', 'status', 'sent_at', 'responded_at', 'created_at')
+    list_display = ('title', 'supplier', 'status', 'sent_at', 'responded_at', 'decided_at', 'created_at')
     list_filter = ('status',)
     search_fields = ('title', 'supplier__name')
+    readonly_fields = ('access_token',)
+
+
+@admin.register(SupplierAgreement)
+class SupplierAgreementAdmin(admin.ModelAdmin):
+    list_display = ('title', 'supplier', 'status', 'sent_at', 'signed_at', 'signer_name', 'created_at')
+    list_filter = ('status',)
+    search_fields = ('title', 'supplier__name', 'signer_name')
     readonly_fields = ('access_token',)
 
 
@@ -119,9 +135,15 @@ class ApprovalRecordAdmin(admin.ModelAdmin):
         return False
 
 
+@admin.register(TrainingVideo)
+class TrainingVideoAdmin(admin.ModelAdmin):
+    list_display = ('title', 'period', 'created_by', 'created_at')
+    search_fields = ('title', 'description', 'period')
+
+
 @admin.register(TrainingRecord)
 class TrainingRecordAdmin(admin.ModelAdmin):
-    list_display = ('user', 'title', 'status', 'assigned_date', 'due_date', 'completed_date', 'is_overdue')
+    list_display = ('user', 'video', 'title', 'status', 'assigned_date', 'due_date', 'completed_date', 'is_overdue')
     list_filter = ('status',)
     search_fields = ('title', 'user__username')
 

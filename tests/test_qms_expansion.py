@@ -120,6 +120,84 @@ class AssetTests(TestCase):
         self.assertEqual(resp.data['asset_name'], 'Customer DB')
 
 
+class AssetReviewTests(TestCase):
+    """Dated, attributed evidence that an asset was actually looked at
+    (ISO 27001 A.5.9) — same pattern as AccessReview sitting on top of
+    the Access Register."""
+
+    def setUp(self):
+        self.tenant = make_tenant('assetreviewtest')
+        self.host = f'{self.tenant.schema_name}.localhost'
+        self.admin = make_member(self.tenant, 'assetrev_admin', Membership.Role.ADMIN)
+        self.plain_user = make_member(self.tenant, 'assetrev_user', Membership.Role.USER)
+        with schema_context(self.tenant.schema_name):
+            from core.models import Asset
+            self.asset = Asset.objects.create(name='Prod DB Server', asset_type='hardware')
+
+    def test_asset_has_no_last_review_before_one_is_recorded(self):
+        api = APIClient()
+        api.force_authenticate(user=self.admin)
+        resp = api.get(f'/api/assets/{self.asset.pk}/', HTTP_HOST=self.host)
+        self.assertIsNone(resp.data['last_review'])
+
+    def test_plain_user_cannot_record_a_review(self):
+        api = APIClient()
+        api.force_authenticate(user=self.plain_user)
+        resp = api.post(f'/api/assets/{self.asset.pk}/review/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_admin_can_record_a_review_and_it_shows_as_last_review(self):
+        api = APIClient()
+        api.force_authenticate(user=self.admin)
+        resp = api.post(
+            f'/api/assets/{self.asset.pk}/review/',
+            {'outcome': 'confirmed', 'notes': 'Still in service'}, format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(resp.data['last_review']['outcome'], 'confirmed')
+        self.assertEqual(resp.data['last_review']['reviewed_by_username'], 'assetrev_admin')
+        self.assertIsNotNone(resp.data['last_review']['reviewed_at'])
+
+    def test_a_second_review_replaces_last_review_but_keeps_history(self):
+        api = APIClient()
+        api.force_authenticate(user=self.admin)
+        api.post(
+            f'/api/assets/{self.asset.pk}/review/', {'outcome': 'confirmed'}, format='json', HTTP_HOST=self.host,
+        )
+        second = api.post(
+            f'/api/assets/{self.asset.pk}/review/',
+            {'outcome': 'needs_update', 'notes': 'Owner changed teams'}, format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(second.data['last_review']['outcome'], 'needs_update')
+
+        with schema_context(self.tenant.schema_name):
+            from core.models import AssetReview
+            self.assertEqual(AssetReview.objects.filter(asset=self.asset).count(), 2)
+
+    def test_invalid_outcome_is_rejected(self):
+        api = APIClient()
+        api.force_authenticate(user=self.admin)
+        resp = api.post(
+            f'/api/assets/{self.asset.pk}/review/', {'outcome': 'not-a-real-outcome'},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_review_history_endpoint_is_admin_auditor_only(self):
+        api = APIClient()
+        api.force_authenticate(user=self.admin)
+        api.post(f'/api/assets/{self.asset.pk}/review/', {'outcome': 'confirmed'}, format='json', HTTP_HOST=self.host)
+
+        denied = APIClient()
+        denied.force_authenticate(user=self.plain_user)
+        resp = denied.get('/api/asset-reviews/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 403)
+
+        allowed = api.get('/api/asset-reviews/', HTTP_HOST=self.host)
+        self.assertEqual(allowed.status_code, 200)
+        self.assertEqual(allowed.data['count'], 1)
+
+
 class CorrectiveActionWorkflowTests(TestCase):
     def setUp(self):
         self.tenant = make_tenant('capaworkflow')

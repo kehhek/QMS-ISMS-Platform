@@ -5,6 +5,7 @@ import RegisterPage from './RegisterPage'
 import ResetPasswordPage from './ResetPasswordPage'
 import ConsoleApp from './ConsoleApp'
 import QuestionnaireResponsePage from './QuestionnaireResponsePage'
+import AgreementSignPage from './AgreementSignPage'
 import TrustCenterPage from './TrustCenterPage'
 
 export default function App() {
@@ -15,6 +16,7 @@ export default function App() {
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/app" element={<ConsoleApp />} />
       <Route path="/questionnaire/:token" element={<QuestionnaireResponsePage />} />
+      <Route path="/agreement/:token" element={<AgreementSignPage />} />
       <Route path="/trust" element={<TrustCenterPage />} />
       <Route path="*" element={<HomePage />} />
     </Routes>

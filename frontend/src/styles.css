@@ -65,21 +65,31 @@ body {
 
 .sidebar-group {
   margin-bottom: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--color-border);
+}
+
+/* First section needs no divider/lead-in of its own — it already sits
+   right under the brand header. */
+.sidebar-group:first-child {
+  padding-top: 0;
+  border-top: none;
 }
 
 .sidebar-group-label {
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--color-text-muted);
-  padding: 0 10px 6px;
+  letter-spacing: 0.06em;
+  color: var(--color-primary);
+  padding: 0 10px 8px;
 }
 
 .sidebar-link {
   display: block;
   width: 100%;
   text-align: left;
+  text-decoration: none;
   appearance: none;
   border: none;
   background: transparent;
@@ -456,6 +466,16 @@ tbody tr:last-child td {
   border-color: var(--color-primary);
   background: var(--color-primary-soft);
 }
+
+/* A left accent per category for a row of tiles that are stages of one
+   progression (e.g. Pending / In progress / Completed) — StatusBadge's
+   tone mapping alone isn't enough here since "assigned" and "in_progress"
+   both read as the same amber "warning" tone, which made those two tiles
+   look identical at a glance. These use the deeper "-text" tokens (not
+   the pale "-bg" ones) so the border reads clearly against a white tile. */
+.stat-tile-accent-neutral { border-left: 3px solid var(--color-neutral-text); }
+.stat-tile-accent-warning { border-left: 3px solid var(--color-warning-text); }
+.stat-tile-accent-success { border-left: 3px solid var(--color-success-text); }
 
 /* Dashboard: chart cards */
 .dashboard-grid {

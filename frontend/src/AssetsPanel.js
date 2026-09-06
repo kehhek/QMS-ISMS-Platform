@@ -21,10 +21,15 @@ function OwnerSelect({ value, onChange, members }) {
   )
 }
 
+function formatDate(value) {
+  return value ? new Date(value).toLocaleString() : '—'
+}
+
 export default function AssetsPanel({ token }) {
   const [members, setMembers] = useState([])
+  const [reviewDrafts, setReviewDrafts] = useState({}) // { [assetId]: { outcome, notes } }
   const {
-    items: assets, error, form, setForm, create,
+    items: assets, error, setError, form, setForm, create, load,
     editingId, editForm, setEditForm, startEdit, cancelEdit, saveEdit, remove,
   } = useCrudPanel('/assets/', token, EMPTY_FORM)
 
@@ -38,6 +43,22 @@ export default function AssetsPanel({ token }) {
     create({ ...form, owner: form.owner || null })
   }
 
+  const reviewDraftFor = (id) => reviewDrafts[id] || { outcome: 'confirmed', notes: '' }
+  const setReviewDraft = (id, changes) => setReviewDrafts({ ...reviewDrafts, [id]: { ...reviewDraftFor(id), ...changes } })
+
+  const submitReview = (asset) => {
+    apiFetch(`/assets/${asset.id}/review/`, token, {
+      method: 'POST',
+      body: JSON.stringify(reviewDraftFor(asset.id)),
+    })
+      .then(() => {
+        setError(null)
+        setReviewDrafts({ ...reviewDrafts, [asset.id]: { outcome: 'confirmed', notes: '' } })
+        load()
+      })
+      .catch((err) => setError(err.message))
+  }
+
   if (!token) return <p className="empty-state">Set a token above to view assets.</p>
 
   return (
@@ -46,6 +67,8 @@ export default function AssetsPanel({ token }) {
       <p className="panel-hint">
         The things a risk can be about — hardware, software, data, facilities, and services.
         Anyone can register one; editing/reassigning needs admin or auditor; only admin can remove one.
+        "Record a review" (admin/auditor) logs a dated, attributed periodic review — ISO 27001 A.5.9
+        asset inventory maintenance — so "Last Review" is real evidence, not just an unreviewed list.
       </p>
       <form onSubmit={submitCreate} className="toolbar" style={{ flexWrap: 'wrap' }}>
         <input
@@ -91,7 +114,9 @@ export default function AssetsPanel({ token }) {
                 <th>Asset Owner</th>
                 <th>Security &amp; Compliance</th>
                 <th>Current Status</th>
+                <th>Last Review</th>
                 <th>Actions</th>
+                <th>Record a review</th>
               </tr>
             </thead>
             <tbody>
@@ -122,10 +147,12 @@ export default function AssetsPanel({ token }) {
                         {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
                       </select>
                     </td>
+                    <td>—</td>
                     <td>
                       <button onClick={saveEdit} style={{ marginRight: 4 }}>Save</button>
                       <button onClick={cancelEdit}>Cancel</button>
                     </td>
+                    <td>—</td>
                   </tr>
                 ) : (
                   <tr key={a.id}>
@@ -136,8 +163,39 @@ export default function AssetsPanel({ token }) {
                     <td><span className="badge badge-neutral">{a.sensitivity}</span></td>
                     <td><StatusBadge value={a.status} /></td>
                     <td>
+                      {a.last_review ? (
+                        <>
+                          <span className={`badge ${a.last_review.outcome === 'needs_update' ? 'badge-warning' : 'badge-success'}`}>
+                            {a.last_review.outcome.replace('_', ' ')}
+                          </span>
+                          <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+                            {formatDate(a.last_review.reviewed_at)} by {a.last_review.reviewed_by_username || 'system'}
+                          </div>
+                        </>
+                      ) : (
+                        <span className="badge badge-warning">never reviewed</span>
+                      )}
+                    </td>
+                    <td>
                       <button onClick={() => startEdit(a)} style={{ marginRight: 4 }}>Edit</button>
                       <button onClick={() => remove(a, `"${a.name}"`)}>Delete</button>
+                    </td>
+                    <td>
+                      <select
+                        value={reviewDraftFor(a.id).outcome}
+                        onChange={(e) => setReviewDraft(a.id, { outcome: e.target.value })}
+                        style={{ marginRight: 4 }}
+                      >
+                        <option value="confirmed">Confirm accurate</option>
+                        <option value="needs_update">Needs update</option>
+                      </select>
+                      <input
+                        placeholder="Notes"
+                        value={reviewDraftFor(a.id).notes}
+                        onChange={(e) => setReviewDraft(a.id, { notes: e.target.value })}
+                        style={{ width: 100, marginRight: 4 }}
+                      />
+                      <button onClick={() => submitReview(a)}>Record</button>
                     </td>
                   </tr>
                 )

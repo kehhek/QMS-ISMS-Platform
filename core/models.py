@@ -187,6 +187,32 @@ class Asset(models.Model):
         return self.name
 
 
+class AssetReview(models.Model):
+    """Evidence that a specific Asset was actually looked at — periodic
+    asset inventory review (ISO 27001 A.5.9), not just that the asset
+    register exists. One row per completed review; AssetViewSet.review()
+    is the only way to create one — same pattern as AccessReview sitting
+    on top of the Access Register (tenants/models.py)."""
+
+    class Outcome(models.TextChoices):
+        CONFIRMED = 'confirmed', 'Confirmed accurate'
+        NEEDS_UPDATE = 'needs_update', 'Needs update'
+
+    asset = models.ForeignKey(Asset, on_delete=models.CASCADE, related_name='reviews')
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+    )
+    reviewed_at = models.DateTimeField(auto_now_add=True)
+    outcome = models.CharField(max_length=20, choices=Outcome.choices, default=Outcome.CONFIRMED)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['-reviewed_at']
+
+    def __str__(self):
+        return f'Review of {self.asset} — {self.outcome} at {self.reviewed_at}'
+
+
 class Risk(models.Model):
     class Status(models.TextChoices):
         OPEN = 'open', 'Open'
@@ -256,8 +282,14 @@ class SupplierQuestionnaire(models.Model):
     class Status(models.TextChoices):
         DRAFT = 'draft', 'Draft'
         SENT = 'sent', 'Sent'
+        # Displayed as "Under review" in the UI (see StatusBadge's
+        # LABEL_OVERRIDE) — the stored value stays "responded" so no
+        # migration is needed; it's the state from the moment the
+        # supplier submits answers until an admin makes a decision.
         RESPONDED = 'responded', 'Responded'
         REVIEWED = 'reviewed', 'Reviewed'
+        APPROVED = 'approved', 'Approved'
+        REJECTED = 'rejected', 'Rejected'
 
     supplier = models.ForeignKey(Supplier, on_delete=models.CASCADE, related_name='questionnaires')
     title = models.CharField(max_length=255)
@@ -278,8 +310,67 @@ class SupplierQuestionnaire(models.Model):
     reviewed_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
     )
+    # The approve/reject decision — distinct from the plain "reviewed"
+    # marker above, which only means "an admin has looked at this",  not
+    # that a decision was made yet.
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def save(self, *args, **kwargs):
+        if not self.access_token:
+            self.access_token = secrets.token_urlsafe(32)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f'{self.title} — {self.supplier.name}'
+
+
+class SupplierAgreement(models.Model):
+    """A vendor agreement/contract sent to a Supplier for e-signature
+    once their questionnaire is approved — "we've decided to move
+    forward with you, please sign". Same no-account public-link pattern
+    as SupplierQuestionnaire (see PublicAgreementView); the signature
+    itself is a typed name/title, not the internal ElectronicSignature
+    model, since that requires a real user account + password
+    re-verification an external supplier doesn't have."""
+
+    class Status(models.TextChoices):
+        DRAFT = 'draft', 'Draft'
+        SENT = 'sent', 'Sent'
+        SIGNED = 'signed', 'Signed'
+
+    supplier = models.ForeignKey(Supplier, on_delete=models.CASCADE, related_name='agreements')
+    # Optional traceability back to the questionnaire whose approval led
+    # to this agreement being sent — not required, since an agreement can
+    # also be sent to a supplier with no questionnaire on file.
+    questionnaire = models.ForeignKey(
+        SupplierQuestionnaire, null=True, blank=True, on_delete=models.SET_NULL, related_name='agreements',
+    )
+    title = models.CharField(max_length=255)
+    content = models.TextField(blank=True, help_text='The agreement text, if not attaching a file.')
+    file = models.FileField(
+        upload_to='supplier-agreements/%Y/%m/', storage=get_evidence_storage, null=True, blank=True,
+    )
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    access_token = models.CharField(max_length=64, unique=True, editable=False)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    sent_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+    )
+    signed_at = models.DateTimeField(null=True, blank=True)
+    signer_name = models.CharField(max_length=255, blank=True)
+    signer_title = models.CharField(max_length=255, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['-created_at']
@@ -452,12 +543,39 @@ class CorrectiveAction(models.Model):
         return self.title
 
 
+class TrainingVideo(models.Model):
+    """A security awareness training video (ISO 27001 A.6.3) — e.g. this
+    month's awareness video. Publishing one (see
+    TrainingVideoViewSet.publish) creates a TrainingRecord assignment,
+    linked back to this video, for every active member of the tenant —
+    "who's watched this" is just those assignments' statuses."""
+
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    # Same encrypted-at-rest storage as Document/Evidence — see
+    # get_evidence_storage's docstring for why the backend choice has to
+    # be a callable rather than a frozen setting.
+    file = models.FileField(upload_to='training-videos/%Y/%m/', storage=get_evidence_storage)
+    period = models.CharField(max_length=100, blank=True, help_text='e.g. "September 2026"')
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.title
+
+
 class TrainingRecord(models.Model):
     """Security awareness training tracking (ISO 27001 A.6.3 —
     "information security awareness, education and training"). One row
     per person per training assignment/cycle (e.g. "Annual security
     awareness training 2026"). Feeds the ISMS calendar's overdue/upcoming
-    view via due_date."""
+    view via due_date. `video` is optional — a record can still represent
+    a training cycle with no video attached (e.g. an in-person session)."""
 
     class Status(models.TextChoices):
         ASSIGNED = 'assigned', 'Assigned'
@@ -466,6 +584,9 @@ class TrainingRecord(models.Model):
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='training_records',
+    )
+    video = models.ForeignKey(
+        TrainingVideo, null=True, blank=True, on_delete=models.SET_NULL, related_name='assignments',
     )
     title = models.CharField(max_length=255, help_text='e.g. "Annual security awareness training 2026"')
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ASSIGNED)
@@ -478,6 +599,12 @@ class TrainingRecord(models.Model):
 
     class Meta:
         ordering = ['-due_date']
+        # DB-level guard against publishing the same video to the same
+        # person twice (Postgres treats each NULL video as distinct, so
+        # this never blocks video-less records). TrainingVideoViewSet.
+        # publish() also checks first — this is the belt-and-suspenders
+        # backstop for a concurrent double-publish.
+        unique_together = ('user', 'video')
 
     def __str__(self):
         return f'{self.user} — {self.title}'

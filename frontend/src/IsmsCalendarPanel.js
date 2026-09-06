@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { apiFetch, unwrapList } from './api'
 import StatusBadge from './StatusBadge'
 
-const KIND_LABELS = {
+export const KIND_LABELS = {
   audit: 'Audit',
   corrective_action: 'Corrective/Preventive Action',
   risk: 'Risk treatment',
@@ -24,7 +24,7 @@ const KIND_COLORS = {
   custom: '#e87ba4',
 }
 
-function KindDot({ kind }) {
+export function KindDot({ kind }) {
   return (
     <span
       style={{
@@ -55,7 +55,7 @@ function EventRow({ event, tone }) {
   )
 }
 
-function EventTable({ events, tone, emptyLabel }) {
+export function EventTable({ events, tone, emptyLabel }) {
   if (events.length === 0) return <p className="empty-state">{emptyLabel}</p>
   return (
     <table>

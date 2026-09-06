@@ -4,6 +4,14 @@ import StatTile from './dashboard/StatTile'
 import StackedBar from './dashboard/StackedBar'
 import Legend from './dashboard/Legend'
 import { ordinalSteps, SEVERITY_COLORS } from './dashboard/palette'
+import { EventTable } from './IsmsCalendarPanel'
+
+// Dashboard stays a quick-glance summary, not a second ISMS Calendar —
+// cap how many rows show here and point to the full tab for the rest.
+// Overdue is shown in full up to this cap since "what's late" is the
+// whole point of surfacing it on the dashboard at all.
+const OVERDUE_CAP = 10
+const UPCOMING_CAP = 5
 
 const DOCUMENT_STAGES = ['draft', 'in_review', 'approved', 'archived']
 const RISK_STAGES = ['open', 'mitigating', 'closed']
@@ -27,6 +35,7 @@ function sum(obj) {
 export default function DashboardPanel({ token }) {
   const [summary, setSummary] = useState(null)
   const [activity, setActivity] = useState(null)
+  const [calendar, setCalendar] = useState(null)
   const [error, setError] = useState(null)
 
   const load = () => {
@@ -38,6 +47,12 @@ export default function DashboardPanel({ token }) {
     apiFetch('/audit-log/', token)
       .then((data) => setActivity(unwrapList(data).slice(0, 8)))
       .catch(() => setActivity(null))
+    // Same overdue/upcoming aggregation the ISMS Calendar tab uses (see
+    // its docstring) — any tenant member can read it, so no permission
+    // fallback needed here the way the audit-log fetch above has.
+    apiFetch('/isms-calendar/', token)
+      .then(setCalendar)
+      .catch((err) => setError(err.message))
   }
 
   useEffect(() => {
@@ -76,6 +91,30 @@ export default function DashboardPanel({ token }) {
         <StatTile label="Open corrective actions" value={openCapas} />
         <StatTile label="Controls implemented" value={`${isoImplemented + soc2Implemented} / ${isoTotal + soc2Total}`} />
       </div>
+
+      {calendar && (calendar.overdue.length > 0 || calendar.upcoming.length > 0) && (
+        <div className="dashboard-grid" style={{ marginBottom: 16 }}>
+          <div className="dashboard-card">
+            <h4>Past due ({calendar.overdue.length})</h4>
+            <EventTable events={calendar.overdue.slice(0, OVERDUE_CAP)} tone="danger" emptyLabel="Nothing overdue." />
+            {calendar.overdue.length > OVERDUE_CAP && (
+              <p className="panel-hint">
+                +{calendar.overdue.length - OVERDUE_CAP} more — see the ISMS Calendar tab for the full list.
+              </p>
+            )}
+          </div>
+
+          <div className="dashboard-card">
+            <h4>Upcoming ({calendar.upcoming.length})</h4>
+            <EventTable events={calendar.upcoming.slice(0, UPCOMING_CAP)} tone="warning" emptyLabel="Nothing scheduled yet." />
+            {calendar.upcoming.length > UPCOMING_CAP && (
+              <p className="panel-hint">
+                +{calendar.upcoming.length - UPCOMING_CAP} more — see the ISMS Calendar tab for the full list.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="dashboard-grid">
         <div className="dashboard-card">

@@ -121,6 +121,14 @@ export default function ConsoleApp() {
                   </button>
                 )
               })}
+              {/* Not a tab — /trust is a public, unauthenticated page (no
+                  token, nothing to render inside the console shell), so it
+                  opens in a new tab instead of swapping the active panel. */}
+              {group.label === 'Administration' && (
+                <a href="/trust" target="_blank" rel="noreferrer" className="sidebar-link">
+                  Trust Center ↗
+                </a>
+              )}
             </div>
           ))}
         </nav>
