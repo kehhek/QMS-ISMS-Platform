@@ -98,22 +98,22 @@ export default function NonconformancesPanel({ token }) {
                     <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>CAPA #{nc.resulting_capa}</div>
                   )}
                   {nc.status === 'closed_no_action' && nc.closure_reason && (
-                    <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{nc.closure_reason}</div>
+                    <div className="cell-wrap" style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{nc.closure_reason}</div>
                   )}
                 </td>
                 <td>{nc.reported_by_username || '—'}</td>
                 <td>
                   {(nc.status === 'open' || nc.status === 'under_review') && (
-                    <>
+                    <div className="cell-actions">
                       <input
                         placeholder="Closure reason"
                         value={reasonDrafts[nc.id] || ''}
                         onChange={(e) => setReasonDrafts({ ...reasonDrafts, [nc.id]: e.target.value })}
-                        style={{ width: 120, marginRight: 4 }}
+                        style={{ width: 120 }}
                       />
-                      <button onClick={() => closeNoAction(nc)} style={{ marginRight: 4 }}>Close — No Action</button>
+                      <button onClick={() => closeNoAction(nc)}>Close — No Action</button>
                       <button onClick={() => escalate(nc)}>Escalate to CAPA</button>
-                    </>
+                    </div>
                   )}
                 </td>
               </tr>

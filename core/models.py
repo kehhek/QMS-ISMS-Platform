@@ -6,6 +6,9 @@ from django.contrib.contenttypes.models import ContentType
 from django.db import models
 
 from .storage import get_evidence_storage
+from .validators import (
+    validate_document_extension, validate_document_size, validate_video_extension, validate_video_size,
+)
 
 
 class Document(models.Model):
@@ -44,7 +47,10 @@ class Document(models.Model):
     # content — same per-tenant-encrypted storage as Evidence (see
     # get_evidence_storage's docstring; the name predates this reuse but
     # the implementation was never Evidence-specific).
-    file = models.FileField(upload_to='documents/%Y/%m/', storage=get_evidence_storage, blank=True)
+    file = models.FileField(
+        upload_to='documents/%Y/%m/', storage=get_evidence_storage, blank=True,
+        validators=[validate_document_extension, validate_document_size],
+    )
     version = models.IntegerField(default=1)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
     classification = models.CharField(
@@ -74,6 +80,17 @@ class Document(models.Model):
         related_name='documents_to_approve',
     )
     reviewed_at = models.DateTimeField(null=True, blank=True)
+    # Set only by DocumentViewSet.archive — a deliberate, admin-only,
+    # reasoned retirement of a previously-Approved document, not a plain
+    # status PATCH (status stays fully read-only on the serializer; see
+    # DocumentSerializer's comment). Kept as real fields rather than only
+    # an AuditLog entry so "why was this retired, and by whom" is visible
+    # directly on the document, not buried in the audit trail.
+    archived_at = models.DateTimeField(null=True, blank=True)
+    archived_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+    )
+    archived_reason = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -357,6 +374,7 @@ class SupplierAgreement(models.Model):
     content = models.TextField(blank=True, help_text='The agreement text, if not attaching a file.')
     file = models.FileField(
         upload_to='supplier-agreements/%Y/%m/', storage=get_evidence_storage, null=True, blank=True,
+        validators=[validate_document_extension, validate_document_size],
     )
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
     access_token = models.CharField(max_length=64, unique=True, editable=False)
@@ -569,7 +587,10 @@ class TrainingVideo(models.Model):
     # Same encrypted-at-rest storage as Document/Evidence — see
     # get_evidence_storage's docstring for why the backend choice has to
     # be a callable rather than a frozen setting.
-    file = models.FileField(upload_to='training-videos/%Y/%m/', storage=get_evidence_storage)
+    file = models.FileField(
+        upload_to='training-videos/%Y/%m/', storage=get_evidence_storage,
+        validators=[validate_video_extension, validate_video_size],
+    )
     period = models.CharField(max_length=100, blank=True, help_text='e.g. "September 2026"')
     # The minimum quiz score (see QuizQuestion) to actually count the
     # video as watched — this is the entire "make people actually watch
@@ -673,7 +694,10 @@ class Evidence(models.Model):
     # every operation and serializes the reference (not a frozen backend
     # choice) into migrations — see get_evidence_storage's docstring for
     # why the choice of local-disk-vs-S3 needs to be dynamic here.
-    file = models.FileField(upload_to='evidence/%Y/%m/', storage=get_evidence_storage)
+    file = models.FileField(
+        upload_to='evidence/%Y/%m/', storage=get_evidence_storage,
+        validators=[validate_document_extension, validate_document_size],
+    )
     description = models.TextField(blank=True)
     uploaded_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+',

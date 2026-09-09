@@ -98,7 +98,9 @@ class WorkflowApprovalTests(TestCase):
             from core.models import Document, Workflow, AuditLog
             self.document.refresh_from_db()
             self.assertEqual(self.document.status, Document.Status.APPROVED)
-            self.assertEqual(self.document.version, 2)
+            # v1 (created) -> v2 (submit for review flips it to In review,
+            # its own revisioned transition) -> v3 (fully approved here).
+            self.assertEqual(self.document.version, 3)
 
             wf = Workflow.objects.get(pk=workflow['id'])
             self.assertEqual(wf.status, Workflow.Status.APPROVED)
@@ -120,9 +122,116 @@ class WorkflowApprovalTests(TestCase):
 
         from django_tenants.utils import schema_context
         with schema_context(self.tenant.schema_name):
-            from core.models import Workflow
+            from core.models import Workflow, Document
             wf = Workflow.objects.get(pk=workflow['id'])
             self.assertEqual(wf.status, Workflow.Status.REJECTED)
+            # Sent back for rework, not left stuck "In review" forever.
+            self.document.refresh_from_db()
+            self.assertEqual(self.document.status, Document.Status.DRAFT)
+
+    def test_creating_a_workflow_moves_the_document_to_in_review(self):
+        self._create_workflow()
+        from django_tenants.utils import schema_context
+        with schema_context(self.tenant.schema_name):
+            from core.models import Document
+            self.document.refresh_from_db()
+            self.assertEqual(self.document.status, Document.Status.IN_REVIEW)
+
+    def test_cannot_submit_a_non_draft_document_for_review(self):
+        self._create_workflow()  # document is now In review, not Draft
+        api = self._api_as(self.admin)
+        resp = api.post(
+            '/api/workflows/',
+            {'document': self.document.pk, 'new_steps': [{'order': 1, 'approver_role': 'admin'}]},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_editing_an_approved_documents_content_reverts_it_to_draft(self):
+        workflow = self._create_workflow()
+        api_auditor = self._api_as(self.auditor)
+        api_auditor.post(
+            f'/api/workflow-steps/{workflow["steps"][0]["id"]}/decide/',
+            {'decision': 'approved', 'password': 'pass12345'}, HTTP_HOST=self.host,
+        )
+        api_admin = self._api_as(self.admin)
+        api_admin.post(
+            f'/api/workflow-steps/{workflow["steps"][1]["id"]}/decide/',
+            {'decision': 'approved', 'password': 'pass12345'}, HTTP_HOST=self.host,
+        )
+        from django_tenants.utils import schema_context
+        with schema_context(self.tenant.schema_name):
+            from core.models import Document
+            self.document.refresh_from_db()
+            self.assertEqual(self.document.status, Document.Status.APPROVED)
+
+        # A metadata-only edit shouldn't touch status at all.
+        resp = api_admin.patch(
+            f'/api/documents/{self.document.pk}/', {'title': 'Policy Final (renamed)'},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.data['status'], 'approved')
+
+        # Editing the actual content of an Approved document, though,
+        # means what was signed off on no longer exists unchanged.
+        resp = api_admin.patch(
+            f'/api/documents/{self.document.pk}/', {'content': 'v2, changed after approval'},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['status'], 'draft')
+
+    def test_archive_requires_admin_role(self):
+        api = self._api_as(self.plain_user)
+        resp = api.post(f'/api/documents/{self.document.pk}/archive/', {'reason': 'x'}, HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_cannot_archive_a_document_that_isnt_approved(self):
+        api = self._api_as(self.admin)
+        resp = api.post(f'/api/documents/{self.document.pk}/archive/', {'reason': 'x'}, HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 400)
+
+    def test_archive_requires_a_reason(self):
+        workflow = self._create_workflow()
+        api_auditor = self._api_as(self.auditor)
+        api_auditor.post(
+            f'/api/workflow-steps/{workflow["steps"][0]["id"]}/decide/',
+            {'decision': 'approved', 'password': 'pass12345'}, HTTP_HOST=self.host,
+        )
+        api_admin = self._api_as(self.admin)
+        api_admin.post(
+            f'/api/workflow-steps/{workflow["steps"][1]["id"]}/decide/',
+            {'decision': 'approved', 'password': 'pass12345'}, HTTP_HOST=self.host,
+        )
+        resp = api_admin.post(f'/api/documents/{self.document.pk}/archive/', {'reason': '  '}, HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 400)
+
+    def test_admin_can_archive_an_approved_document(self):
+        workflow = self._create_workflow()
+        api_auditor = self._api_as(self.auditor)
+        api_auditor.post(
+            f'/api/workflow-steps/{workflow["steps"][0]["id"]}/decide/',
+            {'decision': 'approved', 'password': 'pass12345'}, HTTP_HOST=self.host,
+        )
+        api_admin = self._api_as(self.admin)
+        api_admin.post(
+            f'/api/workflow-steps/{workflow["steps"][1]["id"]}/decide/',
+            {'decision': 'approved', 'password': 'pass12345'}, HTTP_HOST=self.host,
+        )
+        resp = api_admin.post(
+            f'/api/documents/{self.document.pk}/archive/', {'reason': 'Superseded by v2'}, HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['status'], 'archived')
+        self.assertEqual(resp.data['archived_reason'], 'Superseded by v2')
+        self.assertEqual(resp.data['archived_by_username'], 'wf_admin')
+        self.assertIsNotNone(resp.data['archived_at'])
+
+        # Can't archive it a second time.
+        resp = api_admin.post(
+            f'/api/documents/{self.document.pk}/archive/', {'reason': 'again'}, HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 400)
 
 
 class AuditLogImmutabilityTests(TestCase):

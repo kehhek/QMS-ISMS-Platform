@@ -1,12 +1,39 @@
 :root {
-  --color-bg: #f4f5f7;
+  /* Platform palette v2 — the four "security domain" card colors
+     (Cybersecurity Leadership green / Security Operations orange /
+     Cloud Security blue / GRC purple). No hex codes were given this
+     time, only a screenshot with no color-picker tool available here —
+     these are my best visual estimate of each swatch. Flag any that
+     look off and I'll adjust the exact value; the roles below (which
+     one drives buttons vs. which are just decorative accents) are easy
+     to re-map independently of the exact hex.
+     Status colors further down (success/warning/danger/neutral) stay
+     OUT of this — green-means-good/amber-means-pending/red-means-danger
+     is a convention independent of brand, not something to reskin. */
+  --color-bg: #f5f4f0;
   --color-surface: #ffffff;
-  --color-border: #e2e5ea;
-  --color-text: #1c2130;
-  --color-text-muted: #6b7280;
-  --color-primary: #4f46e5;
-  --color-primary-hover: #4338ca;
-  --color-primary-soft: #eef2ff;
+  --color-border: #e2e0d8;
+  --color-text: #2f3d29;
+  --color-text-muted: #6b7568;
+
+  /* Orange ("Security Operations") carries the primary/CTA role, same
+     job the old brand-orange had. Background stays the estimated swatch
+     color as-is; text/border derivatives exist only because the swatch
+     itself doesn't clear WCAG AA (4.5:1) as text on light backgrounds,
+     or with white text on top of it as a button fill (checked: white-on
+     -swatch is ~3.4:1 either way) — same pattern as the last palette. */
+  --color-primary: #d2703c;
+  --color-primary-hover: #b85d2e;
+  --color-primary-soft: #f5dfcf;
+  --color-primary-text: #9a4a22;
+  --color-on-primary: #182016;
+
+  /* The other three swatches — used as decorative/secondary accents
+     (hero blobs, section variety) rather than a second and third
+     "primary", so the UI still reads as one coherent action color. */
+  --color-accent-green: #5b7f4f;
+  --color-accent-blue: #2e7a9e;
+  --color-accent-purple: #6d6fa3;
 
   --color-success-bg: #dcfce7;
   --color-success-text: #15803d;
@@ -18,8 +45,8 @@
   --color-neutral-text: #4b5563;
 
   --radius: 8px;
-  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
-  --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.08);
+  --shadow-sm: 0 1px 2px rgba(47, 61, 41, 0.08);
+  --shadow-md: 0 4px 12px rgba(47, 61, 41, 0.1);
 }
 
 * {
@@ -57,7 +84,7 @@ body {
 }
 
 .app-sidebar-brand {
-  font-size: 15px;
+  font-size: 50px;
   font-weight: 700;
   letter-spacing: -0.01em;
   padding: 0 10px 20px;
@@ -81,7 +108,7 @@ body {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--color-primary);
+  color: var(--color-primary-text);
   padding: 0 10px 8px;
 }
 
@@ -108,8 +135,16 @@ body {
 
 .sidebar-link.active {
   background: var(--color-primary-soft);
-  color: var(--color-primary);
+  color: var(--color-primary-text);
   font-weight: 600;
+}
+
+.sidebar-link-dashboard {
+  color: var(--color-primary-text);
+}
+
+.sidebar-link-dashboard.active {
+  color: var(--color-primary-text);
 }
 
 .app-main {
@@ -166,6 +201,22 @@ body {
   border-radius: var(--radius);
   padding: 20px;
   box-shadow: var(--shadow-sm);
+  /* A table forced to fit this box's width (via table's own width:100%)
+     gets its columns auto-shrunk by the browser to make room for
+     whichever column is widest (usually one packed with several form
+     controls) — that's what was breaking "final-demo-admin" into three
+     lines instead of one. Letting the table take its natural width and
+     scroll horizontally instead means no column has to be squeezed, so
+     nothing wraps unless its own content genuinely calls for it. */
+  overflow-x: auto;
+}
+
+.panel table {
+  /* Natural width, not forced to exactly fill the (now scrollable)
+     panel — 100% here would defeat the point above by re-forcing every
+     column back down to the container's width. */
+  width: auto;
+  min-width: 100%;
 }
 
 .panel-hint {
@@ -258,13 +309,88 @@ button:disabled {
 form button[type='submit'] {
   background: var(--color-primary);
   border-color: var(--color-primary);
-  color: #fff;
+  /* White text on this orange is only ~2.8:1 — fails WCAG AA (4.5:1).
+     --color-on-primary is a dark derivative of the same palette that
+     actually reads clearly against it (~6.6:1). */
+  color: var(--color-on-primary);
 }
 
 .btn-primary:hover:not(:disabled),
 form button[type='submit']:hover:not(:disabled) {
   background: var(--color-primary-hover);
   border-color: var(--color-primary-hover);
+}
+
+.btn-danger {
+  background: var(--color-danger-text);
+  border-color: var(--color-danger-text);
+  color: #fff;
+}
+
+.btn-danger:hover:not(:disabled) {
+  filter: brightness(0.92);
+}
+
+/* PromptDialog.js — replaces window.prompt()/confirm() at every
+   electronic-signature and reason-entry call site (approve/reject a
+   workflow step, close a CAPA, archive a document, …). The browser's
+   native prompt() never masks a password field at all; this does. */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 18, 26, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 1000;
+}
+
+.modal-dialog {
+  background: var(--color-surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  padding: 24px;
+  width: 100%;
+  max-width: 420px;
+}
+
+.modal-title {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.modal-message {
+  margin: 0 0 16px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.modal-field {
+  margin-bottom: 14px;
+}
+
+.modal-field-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin-bottom: 4px;
+}
+
+.modal-field input,
+.modal-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
 }
 
 /* Tables */
@@ -294,7 +420,42 @@ thead th {
 tbody td {
   padding: 10px;
   border-bottom: 1px solid var(--color-border) !important;
-  vertical-align: middle;
+  /* top, not middle: rows are rarely uniform height in this app (a long
+     username wrapping, or a cell holding several stacked form controls,
+     both make one cell taller than its neighbors) — "middle" then floats
+     every shorter cell's content in the air instead of lining rows up
+     at a shared top edge, which is what actually reads as "aligned". */
+  vertical-align: top;
+  /* The browser's own auto table-layout algorithm still chooses to wrap
+     a plain single word (e.g. a hyphenated username) in some columns
+     even with `.panel table { width: auto }` giving it all the room it
+     wants — evidently not reliable enough on its own. This is the actual
+     guarantee: nothing in a cell wraps unless it opts back in via
+     .cell-wrap, so a row's height is only ever as tall as it needs to be
+     and every column lines up. The table can already grow past the
+     panel and scroll horizontally (see .panel above), so a genuinely
+     long value just pushes the table wider rather than wrapping. */
+  white-space: nowrap;
+}
+
+/* Opt back into normal wrapping for the few cells that hold real
+   free-text (a description, notes, a closure reason) where wrapping is
+   actually more readable than an very wide single line. */
+.cell-wrap {
+  white-space: normal;
+}
+
+/* A row of controls packed into one cell (a select + input + button for
+   an inline action, e.g. the access register's "record a review" or a
+   status-change control) — flex instead of relying on default inline
+   wrapping, which staggers each control's own baseline/height as soon
+   as they don't all fit on one line and looks broken rather than
+   intentional. */
+.cell-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
 }
 
 tbody tr:hover {
@@ -360,11 +521,137 @@ tbody tr:last-child td {
   margin: 0 0 12px;
 }
 
-/* Auth screen */
+/* Auth screen — login and account-creation share this same split layout
+   (AuthLayout.js) rather than two different "looks" for what's really
+   one first impression: a branded left panel and the actual form on the
+   right. Light/cream, matching the rest of the (also cream) marketing
+   site now — a deeper cream than the form side plus a hairline border
+   is what actually separates the two panels, not a light/dark split. */
 .auth-screen {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: auto 1fr;
+  /* Sized (via the tightened spacing below) to comfortably fit one
+     16:9-ish desktop viewport with no scrolling needed — but min-height
+     + overflow-y auto (not a hard height + overflow hidden) as the
+     fallback, so an unusually short window or larger zoom level scrolls
+     instead of silently clipping content nobody would notice was cut off. */
+  min-height: 100vh;
+  overflow-y: auto;
+}
+
+.auth-topbar {
+  grid-column: 1 / -1;
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+}
+
+.auth-branding {
+  position: relative;
+  /* Same background as the topbar above it and the form side next to it
+     (var(--color-bg)) — it used to be its own slightly different shade,
+     which read as a visible seam where the topbar met this panel. */
+  background: var(--color-bg);
+  color: var(--color-text);
+  display: flex;
+  align-items: center;
   justify-content: center;
-  padding-top: 60px;
+  padding: 24px 40px 40px;
+}
+
+.auth-branding-inner {
+  max-width: 340px;
+}
+
+.auth-back-link {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-decoration: none;
+}
+
+.auth-back-link:hover {
+  color: var(--color-text);
+}
+
+.auth-brand-link {
+  display: inline-block;
+  font-size: 50px;
+  font-weight: 700;
+  color: var(--color-text);
+  text-decoration: none;
+  line-height: 1;
+}
+
+.auth-branding-tagline {
+  font-size: 14px;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+  margin: 0 0 18px;
+}
+
+.auth-branding-photo {
+  display: block;
+  width: 100%;
+  max-width: 300px;
+  /* A square box, not a portrait rectangle — the radial mask below
+     renders as an actual circle only when its box is square; on a 4:5
+     box the same gradient stretches into an oval that still reads as
+     "rectangular" at a glance. */
+  aspect-ratio: 1 / 1;
+  filter: grayscale(1) contrast(1.05);
+  /* No border, no box-shadow, no card edge at all — a radial mask fades
+     the image itself to transparent well before its actual bounds, so
+     the page's own background shows through at the edges instead of a
+     hard frame. */
+  -webkit-mask-image: radial-gradient(circle at 50% 50%, #000 45%, transparent 92%);
+  mask-image: radial-gradient(circle at 50% 50%, #000 45%, transparent 92%);
+  margin: 0 auto 18px;
+  /* AUTH_PHOTOS are shot on plain white studio backdrops on purpose —
+     there's no image-segmentation/background-removal tool available
+     here to cut a real alpha channel around the subject, but "multiply"
+     blending against this panel's own near-white background (see
+     .auth-branding) makes white photo pixels disappear into the page
+     and only the (grayscale) subject read as visible — the practical
+     equivalent of a transparent background for a white-backdrop photo. */
+  mix-blend-mode: multiply;
+}
+
+.auth-branding-points {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 18px;
+}
+
+.auth-branding-point-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.auth-branding-point-label {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  line-height: 1.4;
+  margin-top: 2px;
+}
+
+.auth-branding-frameworks {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.auth-form-side {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  background: var(--color-bg);
 }
 
 .auth-card {
@@ -372,23 +659,68 @@ tbody tr:last-child td {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   box-shadow: var(--shadow-md);
-  padding: 32px;
+  padding: 36px;
   width: 100%;
-  max-width: 320px;
+  max-width: 380px;
 }
 
 .auth-card h2 {
-  margin: 0 0 20px;
-  font-size: 18px;
-}
-
-.auth-card input {
-  width: 100%;
-  margin-bottom: 10px;
+  margin: 0 0 6px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .auth-card button[type='submit'] {
   width: 100%;
+  margin-top: 6px;
+  padding: 10px 14px;
+}
+
+.auth-form-footer-link {
+  margin: 16px 0 0;
+  font-size: 13px;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-primary-text);
+  cursor: pointer;
+  font-size: inherit;
+  font-weight: 600;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 860px) {
+  .auth-screen {
+    grid-template-columns: 1fr;
+  }
+
+  /* Stacked above the form, not hidden — QISMS branding should still
+     show up on a phone, just as a shorter banner instead of a full
+     side panel. */
+  .auth-branding {
+    padding: 32px 24px;
+  }
+
+  .auth-branding-inner {
+    max-width: none;
+  }
+
+  .auth-branding-tagline {
+    margin-bottom: 20px;
+  }
+
+  .auth-branding-points {
+    margin-bottom: 20px;
+  }
 }
 
 /* Workflow cards */
@@ -489,6 +821,15 @@ tbody tr:last-child td {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   padding: 16px;
+  /* A grid item's intrinsic min-width defaults to the width its content
+     needs (not 0), so a table too wide for this card — e.g. the ISMS
+     calendar's actions column — either force-expands the card's own
+     grid track or, worse, just overflows visibly past its border into
+     the next card. min-width: 0 lets the card actually be as narrow as
+     the grid track gives it; overflow-x scrolls whatever doesn't fit
+     inside that instead of spilling out of it. */
+  min-width: 0;
+  overflow-x: auto;
 }
 
 .dashboard-card h4 {
@@ -623,7 +964,7 @@ tbody tr:last-child td {
 
 .marketing-logo {
   font-weight: 700;
-  font-size: 16px;
+  font-size: 50px;
 }
 
 .marketing-nav {
@@ -646,12 +987,12 @@ tbody tr:last-child td {
 }
 
 .marketing-nav-link:hover {
-  color: var(--color-primary);
+  color: var(--color-primary-text);
   background: var(--color-primary-soft);
 }
 
 .marketing-nav-btn-outline {
-  color: var(--color-primary);
+  color: var(--color-primary-text);
   text-decoration: none;
   font-size: 13px;
   font-weight: 600;
@@ -679,102 +1020,429 @@ a.btn-primary {
   border: 1px solid transparent;
 }
 
-/* Full-bleed hero: breaks out of .marketing's max-width to span the
-   viewport, while .hero's own content stays centered and readable. A
-   confident dark surface with a soft brand-color glow reads as more
-   premium than a loud edge-to-edge gradient (Stripe/Linear/Vanta all
-   lean on restraint — see the redesign notes), and doubles as strong
-   contrast for the white headline. */
-.hero {
-  width: 100vw;
-  position: relative;
-  left: 50%;
-  right: 50%;
-  margin-left: -50vw;
-  margin-right: -50vw;
-  text-align: center;
-  padding: 96px 20px 72px;
-  background: radial-gradient(ellipse 900px 500px at 50% -10%, rgba(124, 58, 237, 0.35), transparent),
-    #0b0e1a;
-  color: #ffffff;
-  margin-bottom: 64px;
-  overflow: hidden;
+/* Warm marketing theme — cream background, serif display headline
+   (Fraunces), pill nav/buttons, and an illustrative floating "product"
+   panel in place of a stock photo we don't have. Page-wide cream means
+   the hero itself never needs to be its own full-bleed colored band —
+   it's already sitting on the page's own background. */
+.marketing-warm {
+  background: #f5f4f0;
 }
 
-.hero-eyebrow {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #a5b4fc;
-  margin: 0 0 18px;
-}
-
-.hero h1 {
-  font-size: 48px;
-  font-weight: 800;
-  letter-spacing: -0.035em;
-  line-height: 1.1;
-  margin: 0 0 18px;
-  max-width: 680px;
-  margin-left: auto;
-  margin-right: auto;
-  color: #ffffff;
-}
-
-.hero-subtitle {
-  font-size: 17px;
-  color: rgba(255, 255, 255, 0.72);
-  max-width: 540px;
-  margin: 0 auto 32px;
-  line-height: 1.6;
-}
-
-.hero-actions {
-  display: flex;
+.pill-btn-dark,
+.pill-btn-outline {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  margin-bottom: 28px;
-}
-
-/* a.hero-cta (not .hero-cta) to out-rank a.btn-primary's own font-size/
-   padding — same tag+class specificity, and this rule comes later. */
-a.hero-cta {
-  font-size: 15px;
-  padding: 12px 26px;
-  background: #ffffff;
-  color: #0b0e1a;
-  border-color: #ffffff;
+  gap: 6px;
+  border-radius: 999px;
+  font-size: 13px;
   font-weight: 600;
-}
-
-a.hero-cta:hover {
-  background: rgba(255, 255, 255, 0.88);
-  border-color: rgba(255, 255, 255, 0.88);
-}
-
-.hero-cta-ghost {
-  font-size: 15px;
-  padding: 12px 26px;
-  border-radius: var(--radius);
-  border: 1px solid rgba(255, 255, 255, 0.24);
-  color: #ffffff;
+  padding: 10px 20px;
   text-decoration: none;
-  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
 }
 
-.hero-cta-ghost:hover {
-  border-color: rgba(255, 255, 255, 0.5);
-  background: rgba(255, 255, 255, 0.06);
+.pill-btn-dark {
+  background: #2f3d29;
+  color: #fff;
+  border: 1px solid #2f3d29;
 }
 
-.hero-frameworks {
+.pill-btn-dark:hover {
+  background: #24301f;
+  border-color: #24301f;
+}
+
+.pill-btn-outline {
+  border: 1px solid #e2e0d8;
+  color: #2f3d29;
+  background: transparent;
+}
+
+.pill-btn-outline:hover {
+  background: #eae7dd;
+}
+
+.warm-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 48px;
+  padding: 56px 0 88px;
+}
+
+.warm-hero-copy h1 {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 44px;
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  line-height: 1.15;
+  margin: 0 0 18px;
+  color: #2f3d29;
+}
+
+.warm-hero-subtitle {
+  font-size: 16px;
+  color: #6b7568;
+  max-width: 460px;
+  line-height: 1.6;
+  margin: 0 0 28px;
+}
+
+.hero-capture {
+  display: flex;
+  gap: 8px;
+  max-width: 420px;
+  margin-bottom: 18px;
+}
+
+.hero-capture input {
+  flex: 1;
+  border-radius: 999px;
+  border: 1px solid #e2e0d8;
+  padding: 10px 18px;
+  font-size: 14px;
+  background: #fff;
+}
+
+.warm-hero-frameworks {
   font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.03em;
-  color: rgba(255, 255, 255, 0.45);
+  color: #6b7568;
   margin: 0;
+}
+
+/* The decorative side — two soft overlapping blobs behind a small
+   "dashboard preview" card built from real product concepts (control
+   count, open CAPAs, a coverage trend), plus two floating chips, the
+   same "photo + floating notification cards" composition as the
+   reference this was modeled on, without a stock photo to place. */
+.warm-hero-art {
+  position: relative;
+  min-height: 380px;
+}
+
+.warm-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(2px);
+}
+
+.warm-blob-a {
+  width: 320px;
+  height: 320px;
+  top: 10px;
+  right: 40px;
+  /* Light tint of the "Cloud Security" blue swatch. */
+  background: #d8e7ee;
+}
+
+.warm-blob-b {
+  width: 220px;
+  height: 220px;
+  bottom: 0;
+  left: 10px;
+  /* Light tint of the "Governance, Risk and Compliance" purple swatch. */
+  background: #e2e2ee;
+}
+
+/* An organic (non-rectangular) mask via asymmetric border-radius — the
+   same "blob-clipped portrait" shape the reference uses instead of a
+   plain rectangle, grayscale to match its black-and-white treatment. */
+.warm-hero-photo {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  max-width: 340px;
+  aspect-ratio: 4 / 5;
+  margin: 30px auto 0;
+  border-radius: 44% 56% 58% 42% / 48% 44% 56% 52%;
+  overflow: hidden;
+  filter: grayscale(1) contrast(1.05);
+  box-shadow: 0 24px 50px rgba(47, 61, 41, 0.18);
+}
+
+/* CyclingPhoto.js — every image in the set stays mounted at all times
+   (just invisible), and crossfades to the next on an interval. Sizing/
+   shape/filter all live on the wrapper (e.g. .warm-hero-photo above),
+   applied via className; these two rules are only the fade mechanics. */
+.cycling-photo {
+  position: relative;
+}
+
+.cycling-photo-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 2.5s ease;
+}
+
+.cycling-photo-img.cycling-photo-active {
+  opacity: 1;
+}
+
+/* The auth pages' photos are cropped into a square (see
+   .auth-branding-photo's aspect-ratio: 1/1) — a headshot's natural
+   framing usually isn't square, and object-fit: cover's default center
+   crop was cutting through the top of the head instead of the chest to
+   fit that squarer box. Biasing toward the top of the frame keeps the
+   whole head in view and crops from the shoulders/chest instead. */
+.auth-branding-photo .cycling-photo-img {
+  object-position: 50% 12%;
+}
+
+.warm-float-chip {
+  position: absolute;
+  z-index: 2;
+  top: 24px;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #fff;
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #2f3d29;
+  box-shadow: 0 10px 24px rgba(47, 61, 41, 0.1);
+}
+
+.warm-float-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4ade80;
+  display: inline-block;
+}
+
+.warm-float-card {
+  position: absolute;
+  z-index: 2;
+  bottom: 30px;
+  right: 10px;
+  background: #fff;
+  border-radius: 14px;
+  padding: 12px 18px;
+  box-shadow: 0 14px 30px rgba(47, 61, 41, 0.12);
+}
+
+.warm-float-card-label {
+  font-size: 11px;
+  color: #6b7568;
+  margin-bottom: 2px;
+}
+
+.warm-float-card-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: #2f3d29;
+}
+
+/* Simple static content pages (Privacy Policy, Contact Us, ...) — see
+   StaticPageLayout.js. */
+.static-page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 20px 0 60px;
+}
+
+.static-page h1 {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 40px;
+  margin: 0 0 4px;
+}
+
+.static-page-updated {
+  color: var(--color-text-muted);
+  font-size: 13px;
+  margin: 0 0 28px;
+}
+
+.static-page-body h2 {
+  font-size: 20px;
+  margin: 28px 0 10px;
+}
+
+.static-page-body p,
+.static-page-body li {
+  color: var(--color-text);
+  line-height: 1.6;
+  font-size: 15px;
+}
+
+.static-page-body ul {
+  padding-left: 20px;
+  margin: 0 0 16px;
+}
+
+.static-page-body a {
+  color: var(--color-primary-text);
+}
+
+.contact-card-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.contact-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  min-width: 220px;
+}
+
+.contact-card-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  margin-bottom: 6px;
+}
+
+.contact-card-value {
+  display: block;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.contact-card-value:hover {
+  color: var(--color-primary-text);
+}
+
+/* The two alternating "feature + mockup" rows. */
+.zigzag-section {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 48px;
+  padding: 48px 0;
+}
+
+.zigzag-reverse .zigzag-copy {
+  order: 2;
+}
+
+.zigzag-copy h2 {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 30px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  margin: 0 0 14px;
+  color: #2f3d29;
+}
+
+.zigzag-copy p {
+  font-size: 15px;
+  color: #6b7568;
+  line-height: 1.6;
+  margin: 0 0 22px;
+  max-width: 420px;
+}
+
+.mock-card {
+  background: #fff;
+  border: 1px solid #e2e0d8;
+  border-radius: 16px;
+  box-shadow: 0 16px 36px rgba(47, 61, 41, 0.08);
+  padding: 20px;
+}
+
+.mock-card-header {
+  display: grid;
+  grid-template-columns: 1fr 2fr 1fr;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7568;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e2e0d8;
+  margin-bottom: 10px;
+}
+
+.mock-card-row {
+  display: grid;
+  grid-template-columns: 1fr 2fr 1fr;
+  align-items: center;
+  font-size: 13px;
+  padding: 8px 0;
+  color: #2f3d29;
+}
+
+.mock-card-id {
+  color: #6b7568;
+  font-size: 12px;
+}
+
+.mock-badge {
+  display: inline-block;
+  width: fit-content;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+
+.mock-badge-success { background: #dcfce7; color: #15803d; }
+.mock-badge-warning { background: #fef3c7; color: #b45309; }
+.mock-badge-neutral { background: #eef0f3; color: #4b5563; }
+
+.mock-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #2f3d29;
+  margin-bottom: 14px;
+}
+
+.mock-coverage-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.mock-coverage-name {
+  width: 70px;
+  font-size: 12px;
+  color: #6b7568;
+  flex-shrink: 0;
+}
+
+.mock-coverage-bar {
+  flex: 1;
+  height: 8px;
+  background: #ece4d0;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.mock-coverage-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--color-accent-blue), #7fb4cc);
+  border-radius: 999px;
+}
+
+.mock-coverage-percent {
+  width: 32px;
+  text-align: right;
+  font-size: 12px;
+  font-weight: 600;
+  color: #2f3d29;
 }
 
 /* A brief, quantified credibility strip right under the hero — the
@@ -801,125 +1469,6 @@ a.hero-cta:hover {
   font-size: 13px;
   color: var(--color-text-muted);
   margin-top: 4px;
-}
-
-.feature-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 20px;
-  margin-bottom: 64px;
-}
-
-/* No icon boxes — a thin top accent is enough differentiation without
-   the visual noise of four different emoji/colored badges. */
-.feature-card {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-top: 2px solid var(--color-primary);
-  border-radius: var(--radius);
-  padding: 24px 20px;
-}
-
-.feature-card h3 {
-  margin: 0 0 8px;
-  font-size: 16px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-.feature-card p {
-  margin: 0;
-  font-size: 13px;
-  color: var(--color-text-muted);
-  line-height: 1.55;
-}
-
-.pricing {
-  text-align: center;
-  margin-bottom: 48px;
-}
-
-.pricing h2 {
-  font-size: 28px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  margin-bottom: 32px;
-}
-
-.pricing-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 20px;
-  text-align: left;
-}
-
-.pricing-card {
-  position: relative;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  padding: 28px 24px;
-  display: flex;
-  flex-direction: column;
-}
-
-.pricing-card.highlighted {
-  border: 2px solid var(--color-primary);
-  box-shadow: var(--shadow-md);
-  padding-top: 40px;
-}
-
-.pricing-ribbon {
-  position: absolute;
-  top: 0;
-  left: 24px;
-  transform: translateY(-50%);
-  background: var(--color-primary);
-  color: #fff;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  padding: 5px 12px;
-  border-radius: 999px;
-}
-
-.pricing-card h3 {
-  margin: 0 0 4px;
-  font-size: 16px;
-}
-
-.pricing-price {
-  font-size: 28px;
-  font-weight: 700;
-  margin-bottom: 4px;
-}
-
-.pricing-tagline {
-  font-size: 13px;
-  color: var(--color-text-muted);
-  margin: 0 0 16px;
-}
-
-.pricing-card ul {
-  list-style: none;
-  margin: 0 0 20px;
-  padding: 0;
-  flex-grow: 1;
-}
-
-.pricing-card li {
-  font-size: 13px;
-  padding: 5px 0;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.pricing-card li:last-child {
-  border-bottom: none;
-}
-
-.pricing-cta {
-  width: 100%;
 }
 
 .demo-request {
@@ -973,19 +1522,89 @@ a.hero-cta:hover {
     grid-template-columns: 1fr;
   }
 
-  .hero h1 {
-    font-size: 34px;
+  .warm-hero,
+  .zigzag-section {
+    grid-template-columns: 1fr;
   }
 
-  .hero-actions {
+  .zigzag-reverse .zigzag-copy {
+    order: 0;
+  }
+
+  .warm-hero-art {
+    min-height: 320px;
+  }
+
+  .warm-hero-copy h1 {
+    font-size: 32px;
+  }
+
+  .hero-capture {
     flex-direction: column;
   }
 }
 
 .marketing-footer {
-  text-align: center;
-  font-size: 12px;
+  margin-top: 40px;
+  padding-top: 40px;
+  border-top: 1px solid var(--color-border);
+}
+
+.marketing-footer-columns {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  gap: 32px;
+  padding-bottom: 32px;
+}
+
+.marketing-footer-brand p {
+  margin: 8px 0 0;
+  font-size: 13px;
   color: var(--color-text-muted);
+  line-height: 1.55;
+  max-width: 320px;
+}
+
+.marketing-footer-col h4 {
+  margin: 0 0 12px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.marketing-footer-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.marketing-footer-col a {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.marketing-footer-col a:hover {
+  color: var(--color-primary-text);
+}
+
+.marketing-footer-bottom {
   padding-top: 20px;
   border-top: 1px solid var(--color-border);
+  text-align: center;
+}
+
+.marketing-footer-bottom p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+@media (max-width: 640px) {
+  .marketing-footer-columns {
+    grid-template-columns: 1fr;
+  }
 }

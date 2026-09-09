@@ -1,24 +1,13 @@
 import React, { useState } from 'react'
-import { useNavigate, useSearchParams, Link } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { formatApiError } from './api'
 import { writeStoredToken } from './tokenStorage'
-
-const PLAN_OPTIONS = [
-  { value: 'free', label: 'Free' },
-  { value: 'team', label: 'Team' },
-  { value: 'enterprise', label: 'Enterprise' },
-]
+import AuthLayout from './AuthLayout'
 
 export default function RegisterPage() {
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
   const [form, setForm] = useState({
-    org_name: '',
-    subdomain: '',
-    username: '',
-    email: '',
-    password: '',
-    plan: searchParams.get('plan') || 'free',
+    org_name: '', subdomain: '', username: '', email: '', password: '',
   })
   const [error, setError] = useState(null)
   const [submitting, setSubmitting] = useState(false)
@@ -48,60 +37,71 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="auth-screen">
-      <div className="auth-card" style={{ maxWidth: 380 }}>
-        <form onSubmit={submit}>
-          <h2>Create your organization</h2>
-          {error && <p className="error-text">{error}</p>}
+    <AuthLayout cardMaxWidth={420}>
+      <form onSubmit={submit} className="auth-form">
+        <h2>Create your organization</h2>
+        <p className="panel-hint">Set up your own tenant — you'll be its first admin.</p>
+        {error && <p className="error-text">{error}</p>}
 
+        <div className="modal-field">
+          <label className="modal-field-label" htmlFor="register-org-name">Organization name</label>
           <input
-            placeholder="Organization name"
+            id="register-org-name"
             value={form.org_name}
             onChange={(e) => setForm({ ...form, org_name: e.target.value })}
             required
           />
+        </div>
+        <div className="modal-field">
+          <label className="modal-field-label" htmlFor="register-subdomain">Subdomain</label>
           <input
-            placeholder="Subdomain (e.g. acme)"
+            id="register-subdomain"
+            placeholder="e.g. acme"
             value={form.subdomain}
             onChange={(e) => setForm({ ...form, subdomain: e.target.value })}
             required
           />
+        </div>
+        <div className="modal-field">
+          <label className="modal-field-label" htmlFor="register-username">Your username</label>
           <input
-            placeholder="Your username"
+            id="register-username"
             value={form.username}
             onChange={(e) => setForm({ ...form, username: e.target.value })}
             required
           />
+        </div>
+        <div className="modal-field">
+          <label className="modal-field-label" htmlFor="register-email">Email</label>
           <input
-            placeholder="Email"
+            id="register-email"
             type="email"
             value={form.email}
             onChange={(e) => setForm({ ...form, email: e.target.value })}
             required
           />
+        </div>
+        <div className="modal-field">
+          <label className="modal-field-label" htmlFor="register-password">Password</label>
           <input
-            placeholder="Password"
+            id="register-password"
             type="password"
+            autoComplete="new-password"
             value={form.password}
             onChange={(e) => setForm({ ...form, password: e.target.value })}
             required
-            minLength={8}
+            minLength={10}
           />
-          <select
-            value={form.plan}
-            onChange={(e) => setForm({ ...form, plan: e.target.value })}
-            style={{ width: '100%', marginBottom: 10 }}
-          >
-            {PLAN_OPTIONS.map((p) => <option key={p.value} value={p.value}>{p.label} plan</option>)}
-          </select>
+        </div>
 
-          <button type="submit" disabled={submitting}>{submitting ? 'Creating…' : 'Create account'}</button>
+        <button type="submit" className="btn-primary" disabled={submitting}>
+          {submitting ? 'Creating…' : 'Create account'}
+        </button>
 
-          <p style={{ marginTop: 14, fontSize: 12 }}>
-            Already have an account? <Link to="/app">Log in</Link>
-          </p>
-        </form>
-      </div>
-    </div>
+        <p className="auth-form-footer-link">
+          Already have an account? <Link to="/app">Log in</Link>
+        </p>
+      </form>
+    </AuthLayout>
   )
 }

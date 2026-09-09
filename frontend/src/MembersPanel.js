@@ -39,6 +39,17 @@ export default function MembersPanel({ token }) {
       .catch((err) => setError(err.message))
   }
 
+  const resetPassword = (member) => {
+    if (!window.confirm(`Reset ${member.username}'s password? Their current password will stop working immediately.`)) return
+    setLastGeneratedPassword(null)
+    apiFetch(`/tenant/members/${member.id}/reset-password/`, token, { method: 'POST' })
+      .then((data) => {
+        setError(null)
+        setLastGeneratedPassword(`${data.username}: ${data.generated_password}`)
+      })
+      .catch((err) => setError(err.message))
+  }
+
   if (!token) return <p className="empty-state">Set a token above to view members.</p>
 
   return (
@@ -46,7 +57,7 @@ export default function MembersPanel({ token }) {
       {error && <p className="error-text">{error}</p>}
       {lastGeneratedPassword && (
         <p className="notice-box">
-          New user created — generated password (shown once): <code>{lastGeneratedPassword}</code>
+          Generated password (shown once): <code>{lastGeneratedPassword}</code>
         </p>
       )}
       <p className="panel-hint">
@@ -95,6 +106,7 @@ export default function MembersPanel({ token }) {
               <th>Role</th>
               <th>Groups</th>
               <th>Since</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -105,6 +117,9 @@ export default function MembersPanel({ token }) {
                 <td><span className="badge badge-neutral">{m.role}</span></td>
                 <td>{m.groups && m.groups.length ? m.groups.join(', ') : '—'}</td>
                 <td>{new Date(m.created_at).toLocaleDateString()}</td>
+                <td>
+                  <button type="button" onClick={() => resetPassword(m)}>Reset password</button>
+                </td>
               </tr>
             ))}
           </tbody>

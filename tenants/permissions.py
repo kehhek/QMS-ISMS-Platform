@@ -21,6 +21,16 @@ def get_role(user, tenant=None):
     return membership.role if membership else None
 
 
+def _delete_requires_admin(request, role):
+    """Deleting anything is admin-only, platform-wide — a stricter floor
+    underneath every ViewSet's own `allowed_roles`, not something each
+    one has to opt into separately. A view that lists 'user' or 'auditor'
+    in allowed_roles still gets them for create/update; DELETE always
+    needs the admin role specifically (superuser still bypasses this,
+    same as everything else — checked before this runs)."""
+    return request.method == 'DELETE' and role != 'admin'
+
+
 class HasTenantRole(permissions.BasePermission):
     """Tenant-scoped RBAC: a user's role is looked up via Membership for
     whichever tenant the current request is being served for, not via
@@ -30,7 +40,8 @@ class HasTenantRole(permissions.BasePermission):
     Any authenticated user with *some* membership in the current tenant
     can read (list/retrieve). Write access requires a role in the view's
     `allowed_roles`, or superuser status. A view with no `allowed_roles`
-    set allows writes to any member of the tenant.
+    set allows writes to any member of the tenant. DELETE is a further
+    exception on top of all that — see _delete_requires_admin above.
     """
 
     def has_permission(self, request, view):
@@ -43,6 +54,9 @@ class HasTenantRole(permissions.BasePermission):
         role = get_role(user)
         if request.method in permissions.SAFE_METHODS:
             return role is not None
+
+        if _delete_requires_admin(request, role):
+            return False
 
         allowed = getattr(view, 'allowed_roles', None)
         if not allowed:
@@ -63,6 +77,9 @@ class HasTenantRoleStrict(HasTenantRole):
             return True
 
         role = get_role(user)
+        if _delete_requires_admin(request, role):
+            return False
+
         allowed = getattr(view, 'allowed_roles', None)
         if not allowed:
             return role is not None

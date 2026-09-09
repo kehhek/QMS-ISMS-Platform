@@ -135,6 +135,7 @@ class MembershipViewSet(CsvExportMixin, viewsets.ModelViewSet):
         if user_created:
             generated_password = generate_password()
             user.set_password(generated_password)
+            user.must_change_password = True
             user.save()
             if user.email:
                 email_sent = send_notification_email(
@@ -198,6 +199,55 @@ class MembershipViewSet(CsvExportMixin, viewsets.ModelViewSet):
             membership.user.save(update_fields=['is_active'])
 
         return Response(MembershipSerializer(membership).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='reset-password')
+    def reset_password(self, request, pk=None):
+        """Admin-initiated password reset — for a member who's locked
+        themselves out or lost a temporary password, without needing
+        Django admin access. Same generated-password pattern as invite:
+        emailed to the user if they have an address, and always also
+        returned once in the response so an admin can relay it out of
+        band. Also clears any Part 11 §11.300(d) lockout state (a new
+        password should let a locked-out user straight back in, not
+        leave them locked out with a password that now works)."""
+        membership = self.get_object()
+        user = membership.user
+
+        generated_password = generate_password()
+        user.set_password(generated_password)
+        user.must_change_password = True
+        user.failed_login_count = 0
+        user.locked_until = None
+        user.save(update_fields=[
+            'password', 'password_changed_at', 'must_change_password', 'failed_login_count', 'locked_until',
+        ])
+
+        email_sent = False
+        if user.email:
+            email_sent = send_notification_email(
+                subject=f'Your password was reset for {membership.tenant.name}',
+                message=(
+                    f'An administrator reset your password for {membership.tenant.name}.\n\n'
+                    f'Username: {user.username}\n'
+                    f'Temporary password: {generated_password}\n\n'
+                    'Log in and change your password as soon as possible.'
+                ),
+                recipient_list=[user.email],
+            )
+
+        # Never put the password itself in audit metadata — the log is
+        # readable by the auditor role too, and a password isn't
+        # evidence, it's a secret.
+        log_action(
+            request.user, AuditLog.Action.UPDATE, membership,
+            metadata={'action': 'password_reset', 'username': user.username},
+        )
+
+        return Response({
+            'username': user.username,
+            'generated_password': generated_password,
+            'invite_email_sent': email_sent,
+        })
 
 
 class AccessReviewViewSet(CsvExportMixin, viewsets.ReadOnlyModelViewSet):

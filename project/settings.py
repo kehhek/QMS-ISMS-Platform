@@ -108,6 +108,13 @@ DATABASE_ROUTERS = ['django_tenants.routers.TenantSyncRouter']
 
 AUTH_USER_MODEL = 'accounts.User'
 
+# The default is just ['django.contrib.auth.backends.ModelBackend'] —
+# swapped for our own subclass so the Part 11 §11.300(d) account-lockout
+# enforcement applies to EVERY login path that goes through Django's
+# authenticate(), including Django admin's own /admin/login/ (previously
+# unprotected — see accounts/backends.py for the full explanation).
+AUTHENTICATION_BACKENDS = ['accounts.backends.Part11LockoutBackend']
+
 # 21 CFR Part 11 §11.300(a)/(b): unique ID/password combinations and
 # periodic password revision. No validators were configured at all before
 # this — Django applied none, so any password (however weak) was accepted.

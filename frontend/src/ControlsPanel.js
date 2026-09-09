@@ -285,8 +285,10 @@ function ControlAttachments({ token, control, contentTypeId }) {
                 <td>{ev.uploaded_by_username || '—'}</td>
                 <td>{new Date(ev.uploaded_at).toLocaleString()}</td>
                 <td>
-                  <button onClick={() => download(ev)} style={{ marginRight: 4 }}>Download</button>
-                  <button onClick={() => remove(ev)}>Delete</button>
+                  <div className="cell-actions">
+                    <button onClick={() => download(ev)}>Download</button>
+                    <button onClick={() => remove(ev)}>Delete</button>
+                  </div>
                 </td>
               </tr>
             ))}

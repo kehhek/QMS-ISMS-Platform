@@ -12,6 +12,10 @@ const TONE_BY_VALUE = {
   mitigating: 'warning', pending: 'warning', investigating: 'warning', contained: 'warning',
   open: 'warning', medium: 'warning', under_review: 'warning', sent: 'warning', assigned: 'warning',
   responded: 'warning',
+  // CorrectiveAction's mid-workflow stages (open -> ... -> closed) — same
+  // "in progress" tone as the rest of that family above.
+  investigation: 'warning', action_planned: 'warning', action_implemented: 'warning',
+  verification: 'warning',
 
   rejected: 'danger', cancelled: 'danger', not_implemented: 'danger', critical: 'danger', high: 'danger',
 

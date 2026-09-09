@@ -111,11 +111,65 @@ class DocumentViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
         self._log(AuditLog.Action.CREATE, instance)
 
     def perform_update(self, serializer):
+        instance = serializer.instance
+        # A live edit to an already-Approved document's actual substance
+        # (its content or the attached file — not metadata like owner or
+        # classification) means what was signed off on no longer exists
+        # unchanged. Rather than let it silently stay "Approved" with no
+        # new sign-off, send it back to Draft: it needs a fresh Submit
+        # for review and a brand-new signed workflow before it can be
+        # Approved again. `file` here is always a genuine new upload if
+        # present at all — DocumentsPanel never PATCHes the existing
+        # file's value back (see its startEdit comment).
+        reverts_to_draft = False
+        if instance is not None and instance.status == Document.Status.APPROVED:
+            content_changing = (
+                'content' in serializer.validated_data
+                and serializer.validated_data['content'] != instance.content
+            )
+            file_changing = 'file' in serializer.validated_data
+            reverts_to_draft = content_changing or file_changing
+
         # Document.save() reads this to attribute the resulting DocumentRevision.
-        if serializer.instance is not None:
-            serializer.instance._revision_actor = self.request.user
-        instance = serializer.save()
+        if instance is not None:
+            instance._revision_actor = self.request.user
+        save_kwargs = {'status': Document.Status.DRAFT} if reverts_to_draft else {}
+        instance = serializer.save(**save_kwargs)
         self._log(AuditLog.Action.UPDATE, instance)
+        if reverts_to_draft:
+            log_action(
+                self.request.user, AuditLog.Action.UPDATE, instance,
+                metadata={'status': 'draft', 'reason': 'approved_document_edited'},
+            )
+
+    @action(detail=True, methods=['post'])
+    def archive(self, request, pk=None):
+        """Retires a document that's served its purpose — deliberately
+        restricted to admins and to documents that are actually Approved
+        (retiring a stale Draft isn't "archiving" a controlled document,
+        it's just deleting it), and requires a reason: same evidentiary
+        standard as AccessReview's suspend, an explicit "why", not a bare
+        status flip."""
+        document = self.get_object()
+        if not request.user.is_superuser and get_role(request.user) != 'admin':
+            raise PermissionDenied('Only admins can archive a document.')
+        if document.status != Document.Status.APPROVED:
+            return Response(
+                {'detail': f'Only an Approved document can be archived (this one is "{document.status}").'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        reason = (request.data.get('reason') or '').strip()
+        if not reason:
+            return Response({'reason': ['A reason is required to archive a document.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        document._revision_actor = request.user
+        document.status = Document.Status.ARCHIVED
+        document.archived_at = timezone.now()
+        document.archived_by = request.user
+        document.archived_reason = reason
+        document.save()
+        self._log(AuditLog.Action.UPDATE, document, metadata={'status': 'archived', 'reason': reason})
+        return Response(DocumentSerializer(document).data)
 
     @action(detail=True, methods=['get'])
     def download(self, request, pk=None):
@@ -939,45 +993,81 @@ class EvidenceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
 
 
 class WorkflowViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
+    """Creating one of these *is* "submit for review" — a human
+    deliberately starting the signed approval process on a Draft
+    document, not something that happens on its own. Only allowed while
+    the document is actually a Draft, which also rules out starting a
+    second, concurrent review while one's already pending (the document
+    would be "in_review" by then, not "draft")."""
+
     queryset = Workflow.objects.prefetch_related('steps').all()
     serializer_class = WorkflowSerializer
     permission_classes = [HasTenantRole]
     allowed_roles = ['admin', 'user']
 
     def perform_create(self, serializer):
+        document = serializer.validated_data['document']
+        if document.status != Document.Status.DRAFT:
+            raise ValidationError({
+                'document': [
+                    f'Only a Draft document can be submitted for review (this one is "{document.status}").',
+                ],
+            })
         instance = serializer.save(created_by=self.request.user)
         self._log(AuditLog.Action.CREATE, instance)
+
+        document._revision_actor = self.request.user
+        document.status = Document.Status.IN_REVIEW
+        document.save()
+        log_action(
+            self.request.user, AuditLog.Action.UPDATE, document,
+            metadata={'status': 'in_review', 'workflow_id': instance.pk},
+        )
 
 
 class TrainingVideoViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
     """Security awareness training videos (ISO 27001 A.6.3) — e.g. this
-    month's video. Any tenant member reads/streams; uploading and
-    publishing is admin/auditor only, same tier as assigning a plain
-    TrainingRecord — enforced explicitly below rather than a blanket
-    `allowed_roles`, same reasoning as TrainingRecordViewSet itself."""
+    month's video. A plain user (and an auditor — this feature gives
+    auditor no elevated read access, same tier as a plain user) only
+    ever sees videos actually assigned to them (see get_queryset); an
+    admin sees and manages the whole library. Uploading, editing,
+    deleting, and publishing is admin-only (tightened from admin/auditor)
+    — same tier as assigning a plain TrainingRecord — enforced explicitly
+    below rather than a blanket `allowed_roles`, same reasoning as
+    TrainingRecordViewSet itself."""
 
-    queryset = TrainingVideo.objects.select_related('created_by').prefetch_related('assignments').all()
     serializer_class = TrainingVideoSerializer
     permission_classes = [HasTenantRole]
 
-    def _require_admin_or_auditor(self, request):
+    def get_queryset(self):
+        qs = TrainingVideo.objects.select_related('created_by').prefetch_related('assignments').all()
+        user = self.request.user
+        if user.is_superuser or get_role(user) == 'admin':
+            return qs
+        # Not "any tenant member reads the whole library" — a plain
+        # user (or auditor) should only ever see training actually
+        # assigned to them, never the full catalog or who else has an
+        # assignment for a video they aren't part of.
+        return qs.filter(assignments__user=user)
+
+    def _require_admin(self, request):
         if request.user.is_superuser:
             return
-        if get_role(request.user) not in ('admin', 'auditor'):
-            raise PermissionDenied('Only admins/auditors can upload or manage training videos.')
+        if get_role(request.user) != 'admin':
+            raise PermissionDenied('Only admins can upload or manage training videos.')
 
     def perform_create(self, serializer):
-        self._require_admin_or_auditor(self.request)
+        self._require_admin(self.request)
         instance = serializer.save(created_by=self.request.user)
         self._log(AuditLog.Action.CREATE, instance)
 
     def perform_update(self, serializer):
-        self._require_admin_or_auditor(self.request)
+        self._require_admin(self.request)
         instance = serializer.save()
         self._log(AuditLog.Action.UPDATE, instance)
 
     def perform_destroy(self, instance):
-        self._require_admin_or_auditor(self.request)
+        self._require_admin(self.request)
         self._log(AuditLog.Action.DELETE, instance)
         instance.delete()
 
@@ -988,7 +1078,7 @@ class TrainingVideoViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelView
         doesn't already have one. Safe to call again later (e.g. after
         new members join): it only fills in the gaps, never touches an
         existing assignment's progress."""
-        self._require_admin_or_auditor(request)
+        self._require_admin(request)
         from tenants.models import Membership
         from django.db import connection as _connection
 
@@ -1044,14 +1134,16 @@ class TrainingVideoViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelView
         """Per-team (UserGroup) completion for this video, plus each
         member's current streak — the "which teams still need this" view
         a flat per-person list doesn't give you, and the "100% trained"
-        badge/streak the whole engagement angle is built around. Read
-        access matches the video itself (any tenant member).
+        badge/streak the whole engagement angle is built around. Admin-only
+        — this is a roster of every other member's status, exactly the
+        "view viewers" visibility a plain user (or auditor) doesn't get.
 
         UserGroup is a SHARED_APP model (tenants app) — every tenant's
         groups live in the same table, distinguished only by `tenant`.
         Filtering by the current tenant is required here, the same way
         UserGroupViewSet.get_queryset() does it, or this would leak every
         other tenant's team names and rosters into the response."""
+        self._require_admin(request)
         from django.db import connection as _connection
         from tenants.models import UserGroup
 
@@ -1106,15 +1198,15 @@ def _compute_training_streak(user):
 
 
 class QuizQuestionViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
-    """Quiz question management for a TrainingVideo — same admin/auditor
-    tier as managing the video itself. Reading the full question set
-    (correct_index included) is also admin/auditor only — a trainee
-    taking the quiz uses TrainingVideoViewSet.quiz instead, which strips
-    the answer."""
+    """Quiz question management for a TrainingVideo — admin-only (tightened
+    from admin/auditor: managing the quiz bank is squarely "manage quiz",
+    not a compliance-oversight read). Reading the full question set
+    (correct_index included) is also admin-only — a trainee taking the
+    quiz uses TrainingVideoViewSet.quiz instead, which strips the answer."""
 
     serializer_class = QuizQuestionSerializer
     permission_classes = [HasTenantRoleStrict]
-    allowed_roles = ['admin', 'auditor']
+    allowed_roles = ['admin']
 
     def get_queryset(self):
         qs = QuizQuestion.objects.select_related('video').all()
@@ -1137,16 +1229,19 @@ class QuizQuestionViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewS
 
 
 class TrainingRecordViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
-    """Security awareness training tracking (ISO 27001 A.6.3). Any tenant
-    member can read (visibility into who's trained is part of the point
-    of a register) and mark their OWN record complete via the `complete`
-    action; assigning/editing/deleting records is admin/auditor only.
+    """Security awareness training tracking (ISO 27001 A.6.3). A plain
+    user (and an auditor — no elevated read access on this feature, same
+    as TrainingVideoViewSet) only ever sees their OWN records, not the
+    full register or who else has an assignment ("view viewers" is
+    admin-only); an admin sees and manages everyone's. Any member marks
+    their OWN record complete via the `complete` action; assigning/
+    editing/deleting records is admin-only (tightened from admin/auditor).
 
     No `allowed_roles` class attribute here deliberately — that would
     gate every write (including `complete` on one's own record) at the
     permission-check layer before this view's code ever runs. Instead
     HasTenantRole is left permissive for any-member writes, and the
-    admin/auditor restriction on assignment is enforced explicitly in
+    admin-only restriction on assignment is enforced explicitly in
     perform_create/update/destroy below.
     """
 
@@ -1154,33 +1249,37 @@ class TrainingRecordViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelVie
     permission_classes = [HasTenantRole]
 
     def get_queryset(self):
+        qs = TrainingRecord.objects.select_related('user', 'video').all()
+        user = self.request.user
+        if not (user.is_superuser or get_role(user) == 'admin'):
+            qs = qs.filter(user=user)
         # ?video= lets a video's own "who's watched this" table filter
         # down to just its own assignments, same pattern as Document's
-        # ?category= / ?status=.
-        qs = TrainingRecord.objects.select_related('user', 'video').all()
+        # ?category= / ?status= — admin-only in practice now, since a
+        # non-admin's queryset above is already pinned to their own user.
         video_id = self.request.query_params.get('video')
         if video_id:
             qs = qs.filter(video_id=video_id)
         return qs
 
-    def _require_admin_or_auditor(self, request):
+    def _require_admin(self, request):
         if request.user.is_superuser:
             return
-        if get_role(request.user) not in ('admin', 'auditor'):
-            raise PermissionDenied('Only admins/auditors can assign or edit training records.')
+        if get_role(request.user) != 'admin':
+            raise PermissionDenied('Only admins can assign or edit training records.')
 
     def perform_create(self, serializer):
-        self._require_admin_or_auditor(self.request)
+        self._require_admin(self.request)
         instance = serializer.save()
         self._log(AuditLog.Action.CREATE, instance)
 
     def perform_update(self, serializer):
-        self._require_admin_or_auditor(self.request)
+        self._require_admin(self.request)
         instance = serializer.save()
         self._log(AuditLog.Action.UPDATE, instance)
 
     def perform_destroy(self, instance):
-        self._require_admin_or_auditor(self.request)
+        self._require_admin(self.request)
         self._log(AuditLog.Action.DELETE, instance)
         instance.delete()
 
@@ -1190,9 +1289,13 @@ class TrainingRecordViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelVie
         trainee actually opens the video player, so "in progress" means
         something real instead of every assignment silently skipping
         straight from Pending to Completed."""
+        # get_queryset() already pins a non-admin to their own records
+        # (get_object() 404s before this line for anyone else's id), so
+        # the only way to reach this check for a record that isn't the
+        # caller's own is as an admin/superuser.
         record = self.get_object()
         if record.user_id != request.user.pk and not request.user.is_superuser:
-            if get_role(request.user) not in ('admin', 'auditor'):
+            if get_role(request.user) != 'admin':
                 raise PermissionDenied('You can only start your own training record.')
         if record.status == TrainingRecord.Status.ASSIGNED:
             record.status = TrainingRecord.Status.IN_PROGRESS
@@ -1204,7 +1307,7 @@ class TrainingRecordViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelVie
     def complete(self, request, pk=None):
         record = self.get_object()
         if record.user_id != request.user.pk and not request.user.is_superuser:
-            if get_role(request.user) not in ('admin', 'auditor'):
+            if get_role(request.user) != 'admin':
                 raise PermissionDenied('You can only complete your own training record.')
         record.status = TrainingRecord.Status.COMPLETED
         record.completed_date = timezone.now().date()
@@ -1222,7 +1325,7 @@ class TrainingRecordViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelVie
         actually means the quiz was passed, not just clicked through."""
         record = self.get_object()
         if record.user_id != request.user.pk and not request.user.is_superuser:
-            if get_role(request.user) not in ('admin', 'auditor'):
+            if get_role(request.user) != 'admin':
                 raise PermissionDenied('You can only submit your own quiz.')
 
         if not record.video:
@@ -1350,6 +1453,19 @@ class WorkflowStepViewSet(viewsets.ReadOnlyModelViewSet):
             workflow.status = Workflow.Status.REJECTED
             workflow.completed_at = timezone.now()
             workflow.save()
+            # Sent back to the author, not left stuck "In review" forever —
+            # a rejection means it needs real changes, which means a new
+            # Draft edit and a fresh Submit for review (a brand-new signed
+            # workflow) once those changes are made, same as any other
+            # human-in-the-loop rework cycle.
+            document = workflow.document
+            document._revision_actor = user
+            document.status = Document.Status.DRAFT
+            document.save()
+            log_action(
+                user, AuditLog.Action.UPDATE, document,
+                metadata={'status': 'draft', 'reason': 'review_rejected', 'workflow_id': workflow.pk},
+            )
         else:
             remaining = WorkflowStep.objects.filter(
                 workflow=workflow, status=WorkflowStep.Status.PENDING,

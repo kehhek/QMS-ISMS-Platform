@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { apiFetch, unwrapList } from './api'
 import StatusBadge from './StatusBadge'
+import { requestSignature } from './PromptDialog'
 
 export const KIND_LABELS = {
   audit: 'Audit',
@@ -35,7 +36,31 @@ export function KindDot({ kind }) {
   )
 }
 
-function EventRow({ event, tone }) {
+// Where to PATCH a reschedule and which date field each event kind
+// actually stores it under — one lookup table instead of five near-
+// identical branches wherever a caller needs it.
+const RESCHEDULE_TARGET = {
+  audit: { path: (id) => `/audits/${id}/`, field: 'scheduled_date' },
+  corrective_action: { path: (id) => `/corrective-actions/${id}/`, field: 'due_date' },
+  risk: { path: (id) => `/risks/${id}/`, field: 'target_date' },
+  training: { path: (id) => `/training-records/${id}/`, field: 'due_date' },
+  custom: { path: (id) => `/calendar-events/${id}/`, field: 'date' },
+}
+
+function EventRow({ event, tone, token, onChange }) {
+  const [draftDate, setDraftDate] = useState(event.date)
+  const [rescheduling, setRescheduling] = useState(false)
+  // The row's key (kind+id) stays stable across a reload even though its
+  // data refreshes — React reuses this component instance rather than
+  // remounting it, so draftDate would otherwise still show whatever date
+  // was here at first mount if reschedule is opened a second time after
+  // a save already changed event.date underneath it.
+  const startReschedule = () => {
+    setDraftDate(event.date)
+    setRescheduling(true)
+  }
+  const [error, setError] = useState(null)
+
   const daysFromToday = Math.round((new Date(event.date) - new Date(new Date().toDateString())) / 86400000)
   const relative =
     tone === 'danger'
@@ -44,18 +69,88 @@ function EventRow({ event, tone }) {
         ? 'due today'
         : `in ${daysFromToday} day${daysFromToday === 1 ? '' : 's'}`
 
+  const run = (promise) => promise.then(() => { setError(null); onChange() }).catch((err) => setError(err.message))
+
+  const saveReschedule = () => {
+    const target = RESCHEDULE_TARGET[event.kind]
+    setRescheduling(false)
+    run(apiFetch(target.path(event.id), token, {
+      method: 'PATCH',
+      body: JSON.stringify({ [target.field]: draftDate }),
+    }))
+  }
+
+  const markDone = async () => {
+    if (event.kind === 'audit') {
+      run(apiFetch(`/audits/${event.id}/`, token, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'completed', completed_date: toIsoDate(new Date()) }),
+      }))
+    } else if (event.kind === 'corrective_action') {
+      // Same signed-close flow as the Corrective Actions tab — closing a
+      // CAPA is a deliberate, electronically-signed act, not a checkbox.
+      const result = await requestSignature({
+        title: 'Close this CAPA',
+        message: 'This is your electronic signature verifying the fix was effective.',
+        notesField: { name: 'effectiveness_notes', label: 'Effectiveness verification notes (what evidence shows the fix worked?)' },
+        confirmLabel: 'Close',
+      })
+      if (!result) return
+      run(apiFetch(`/corrective-actions/${event.id}/close/`, token, {
+        method: 'POST',
+        body: JSON.stringify({ password: result.password, effectiveness_notes: result.effectiveness_notes || '' }),
+      }))
+    } else if (event.kind === 'risk') {
+      run(apiFetch(`/risks/${event.id}/`, token, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'closed' }),
+      }))
+    } else if (event.kind === 'training') {
+      run(apiFetch(`/training-records/${event.id}/complete/`, token, { method: 'POST' }))
+    }
+  }
+
+  const removeCustom = () => {
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(`Delete "${event.title}"? This can't be undone.`)) return
+    run(apiFetch(`/calendar-events/${event.id}/`, token, { method: 'DELETE' }))
+  }
+
   return (
     <tr>
       <td><KindDot kind={event.kind} />{KIND_LABELS[event.kind] || event.kind}</td>
       <td>{event.title}</td>
-      <td>{event.date}</td>
+      <td>
+        {rescheduling ? (
+          <div className="cell-actions">
+            <input type="date" value={draftDate} onChange={(e) => setDraftDate(e.target.value)} />
+            <button onClick={saveReschedule}>Save</button>
+            <button onClick={() => { setRescheduling(false); setDraftDate(event.date) }}>Cancel</button>
+          </div>
+        ) : (
+          event.date
+        )}
+      </td>
       <td><span className={`badge badge-${tone}`}>{relative}</span></td>
       <td>{event.status ? <StatusBadge value={event.status} /> : '—'}</td>
+      <td>
+        {error && <p className="error-text" style={{ margin: '0 0 4px' }}>{error}</p>}
+        <div className="cell-actions">
+          {!rescheduling && <button onClick={startReschedule}>Reschedule</button>}
+          {event.kind === 'custom' ? (
+            <button onClick={removeCustom}>Delete</button>
+          ) : (
+            <button onClick={markDone}>
+              {event.kind === 'corrective_action' ? 'Close' : event.kind === 'training' ? 'Mark complete' : 'Mark done'}
+            </button>
+          )}
+        </div>
+      </td>
     </tr>
   )
 }
 
-export function EventTable({ events, tone, emptyLabel }) {
+export function EventTable({ events, tone, emptyLabel, token, onChange }) {
   if (events.length === 0) return <p className="empty-state">{emptyLabel}</p>
   return (
     <table>
@@ -66,10 +161,13 @@ export function EventTable({ events, tone, emptyLabel }) {
           <th>Date</th>
           <th>When</th>
           <th>Status</th>
+          <th>Actions</th>
         </tr>
       </thead>
       <tbody>
-        {events.map((e) => <EventRow key={`${e.kind}-${e.id}`} event={e} tone={tone} />)}
+        {events.map((e) => (
+          <EventRow key={`${e.kind}-${e.id}`} event={e} tone={tone} token={token} onChange={onChange} />
+        ))}
       </tbody>
     </table>
   )
@@ -271,8 +369,10 @@ function CustomEventsSection({ token, onChange }) {
                   </td>
                   <td>{ev.created_by_username || '—'}</td>
                   <td>
-                    <button onClick={saveEdit} style={{ marginRight: 4 }}>Save</button>
-                    <button onClick={cancelEdit}>Cancel</button>
+                    <div className="cell-actions">
+                      <button onClick={saveEdit}>Save</button>
+                      <button onClick={cancelEdit}>Cancel</button>
+                    </div>
                   </td>
                 </tr>
               ) : (
@@ -282,8 +382,10 @@ function CustomEventsSection({ token, onChange }) {
                   <td>{ev.date}</td>
                   <td>{ev.created_by_username || '—'}</td>
                   <td>
-                    <button onClick={() => startEdit(ev)} style={{ marginRight: 4 }}>Edit</button>
-                    <button onClick={() => remove(ev)}>Delete</button>
+                    <div className="cell-actions">
+                      <button onClick={() => startEdit(ev)}>Edit</button>
+                      <button onClick={() => remove(ev)}>Delete</button>
+                    </div>
                   </td>
                 </tr>
               )
@@ -331,7 +433,8 @@ export default function IsmsCalendarPanel({ token }) {
       <p className="panel-hint">
         Every ISMS date that matters, in one place: planned audits, corrective/preventive action
         due dates, risk treatment target dates, security awareness training due dates, and any
-        custom events you add below.
+        custom events you add below. Switch to List view to act on an item directly — reschedule
+        it, or mark it done — without leaving this tab.
       </p>
 
       {data.overdue.length > 0 && (
@@ -361,11 +464,11 @@ export default function IsmsCalendarPanel({ token }) {
         <div className="dashboard-grid">
           <div className="dashboard-card">
             <h4>Past due ({data.overdue.length})</h4>
-            <EventTable events={data.overdue} tone="danger" emptyLabel="Nothing overdue." />
+            <EventTable events={data.overdue} tone="danger" emptyLabel="Nothing overdue." token={token} onChange={load} />
           </div>
           <div className="dashboard-card">
             <h4>Upcoming ({data.upcoming.length})</h4>
-            <EventTable events={data.upcoming} tone="warning" emptyLabel="Nothing scheduled yet." />
+            <EventTable events={data.upcoming} tone="warning" emptyLabel="Nothing scheduled yet." token={token} onChange={load} />
           </div>
         </div>
       )}

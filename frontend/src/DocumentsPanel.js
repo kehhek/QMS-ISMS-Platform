@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { apiFetch, unwrapList } from './api'
 import StatusBadge from './StatusBadge'
 import ExportCsvButton from './ExportCsvButton'
+import { requestInput, requestSignature } from './PromptDialog'
 
 const CLASSIFICATION_OPTIONS = ['public', 'internal', 'confidential', 'restricted']
 const STATUS_OPTIONS = ['draft', 'in_review', 'approved', 'archived']
@@ -117,6 +118,8 @@ export default function DocumentsPanel({ token, category = 'general' }) {
   const [replaceFile, setReplaceFile] = useState(null)
   const [statusFilter, setStatusFilter] = useState('')
   const [statusCounts, setStatusCounts] = useState(null)
+  const [workflows, setWorkflows] = useState([])
+  const [reviewRoleChoice, setReviewRoleChoice] = useState({}) // {[documentId]: approver_role}
 
   const load = () => {
     const query = statusFilter ? `&status=${statusFilter}` : ''
@@ -131,13 +134,70 @@ export default function DocumentsPanel({ token, category = 'general' }) {
       .catch(() => setStatusCounts(null))
   }
 
+  // Same workflows the Approvals tab manages — fetched here too so
+  // Submit for review / Approve / Reject can live right on this table
+  // instead of requiring a trip to that tab. Not category-filtered
+  // (the endpoint doesn't support it), so this is every workflow in the
+  // tenant; pendingStepFor below picks out just the one for each row.
+  const loadWorkflows = () => {
+    apiFetch('/workflows/', token).then((data) => setWorkflows(unwrapList(data))).catch(() => setWorkflows([]))
+  }
+
   useEffect(() => {
     if (!token) return
     load()
     loadStatusCounts()
+    loadWorkflows()
     apiFetch('/tenant/members/', token).then((data) => setMembers(unwrapList(data))).catch(() => setMembers([]))
     // eslint-disable-next-line
   }, [token, category, statusFilter])
+
+  // The earliest still-pending step of this document's pending workflow
+  // (if any) — WorkflowStepViewSet.decide only ever lets the earliest
+  // pending step be decided, so that's the one actually actionable here.
+  const pendingStepFor = (documentId) => {
+    const wf = workflows.find((w) => w.document === documentId && w.status === 'pending')
+    if (!wf) return null
+    return [...wf.steps].filter((s) => s.status === 'pending').sort((a, b) => a.order - b.order)[0] || null
+  }
+
+  const submitForReview = (doc) => {
+    const role = reviewRoleChoice[doc.id] || 'admin'
+    apiFetch('/workflows/', token, {
+      method: 'POST',
+      body: JSON.stringify({ document: doc.id, new_steps: [{ order: 1, approver_role: role }] }),
+    })
+      .then(() => {
+        setError(null)
+        load()
+        loadStatusCounts()
+        loadWorkflows()
+      })
+      .catch((err) => setError(err.message))
+  }
+
+  const decideStep = async (stepId, decision) => {
+    // 21 CFR Part 11 §11.200: signing requires re-entering your password
+    // at the moment of signing — same electronic-signature flow as the
+    // Approvals tab, just triggered from here.
+    const result = await requestSignature({
+      title: decision === 'approved' ? `Approve this ${copy.noun}` : `Reject this ${copy.noun}`,
+      danger: decision === 'rejected',
+      confirmLabel: decision === 'approved' ? 'Approve' : 'Reject',
+    })
+    if (!result) return
+    apiFetch(`/workflow-steps/${stepId}/decide/`, token, {
+      method: 'POST',
+      body: JSON.stringify({ decision, password: result.password }),
+    })
+      .then(() => {
+        setError(null)
+        load()
+        loadStatusCounts()
+        loadWorkflows()
+      })
+      .catch((err) => setError(err.message))
+  }
 
   const create = (e) => {
     e.preventDefault()
@@ -192,6 +252,26 @@ export default function DocumentsPanel({ token, category = 'general' }) {
       .catch((err) => setError(err.message))
   }
 
+  const archiveDocument = async (doc) => {
+    const result = await requestInput({
+      title: `Archive "${doc.title}"?`,
+      message: "This retires it — it can't be un-archived.",
+      fields: [{ name: 'reason', label: 'Reason for archiving', type: 'textarea', required: true }],
+      confirmLabel: 'Archive',
+      danger: true,
+    })
+    if (!result) return
+    apiFetch(`/documents/${doc.id}/archive/`, token, {
+      method: 'POST',
+      body: JSON.stringify({ reason: result.reason }),
+    })
+      .then(() => {
+        setError(null)
+        load()
+      })
+      .catch((err) => setError(err.message))
+  }
+
   const uploadReplacementFile = (doc) => {
     if (!replaceFile) return
     const body = new FormData()
@@ -236,10 +316,12 @@ export default function DocumentsPanel({ token, category = 'general' }) {
       {error && <p className="error-text">{error}</p>}
       <p className="panel-hint">
         Version bumps automatically on every content/status/file change (see the version column) —
-        it isn't something you set directly. Status changes only through an approval workflow (see
-        the Approvals tab), so every "approved" {copy.noun} has a matching electronic signature.
-        Reviewer/Approver here name who's designated for those roles; the actual signed approval is
-        still recorded on the Approvals tab.
+        it isn't something you set directly. Status only ever changes through a signed approval, in
+        the Review column below: Submit for review moves a Draft to In review, and approving (which
+        requires re-entering your password as an electronic signature) moves it to Approved. Editing
+        an Approved {copy.noun}'s content or file sends it back to Draft for re-approval. Once
+        Approved, an admin can Archive it with a reason. For a multi-step approval chain with named
+        approvers, use the Approvals tab instead — this is a one-step shortcut for the common case.
       </p>
 
       {category === 'policy' && (
@@ -314,6 +396,7 @@ export default function DocumentsPanel({ token, category = 'general' }) {
                 <th>Title</th>
                 <th>Classification</th>
                 <th>Status</th>
+                <th>Review</th>
                 <th>Version</th>
                 <th>Author</th>
                 <th>Reviewer</th>
@@ -342,6 +425,7 @@ export default function DocumentsPanel({ token, category = 'general' }) {
                       </select>
                     </td>
                     <td><StatusBadge value={d.status} /></td>
+                    <td>—</td>
                     <td>{d.version}</td>
                     <td>
                       <PersonSelect
@@ -370,8 +454,10 @@ export default function DocumentsPanel({ token, category = 'general' }) {
                     <td>{d.file ? <button onClick={() => download(d)}>Download</button> : '—'}</td>
                     <td>{new Date(d.updated_at).toLocaleString()}</td>
                     <td>
-                      <button onClick={saveEdit} style={{ marginRight: 4 }}>Save</button>
-                      <button onClick={cancelEdit}>Cancel</button>
+                      <div className="cell-actions">
+                        <button onClick={saveEdit}>Save</button>
+                        <button onClick={cancelEdit}>Cancel</button>
+                      </div>
                     </td>
                   </tr>
                 ) : (
@@ -379,32 +465,78 @@ export default function DocumentsPanel({ token, category = 'general' }) {
                     <td>{d.doc_id || '—'}</td>
                     <td>{d.title}</td>
                     <td><span className="badge badge-neutral">{d.classification}</span></td>
-                    <td><StatusBadge value={d.status} /></td>
+                    <td>
+                      <StatusBadge value={d.status} />
+                      {d.status === 'archived' && d.archived_reason && (
+                        <div className="cell-wrap" style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+                          {d.archived_reason} — {new Date(d.archived_at).toLocaleDateString()} by{' '}
+                          {d.archived_by_username || 'system'}
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      {d.status === 'draft' && (
+                        <div className="cell-actions">
+                          <select
+                            value={reviewRoleChoice[d.id] || 'admin'}
+                            onChange={(e) => setReviewRoleChoice({ ...reviewRoleChoice, [d.id]: e.target.value })}
+                          >
+                            <option value="admin">Admin</option>
+                            <option value="auditor">Auditor</option>
+                            <option value="user">User</option>
+                          </select>
+                          <button onClick={() => submitForReview(d)}>Submit for review</button>
+                        </div>
+                      )}
+                      {d.status === 'in_review' && (() => {
+                        const step = pendingStepFor(d.id)
+                        if (!step) {
+                          return <span className="badge badge-warning">Awaiting review</span>
+                        }
+                        return (
+                          <div className="cell-actions">
+                            <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+                              Needs {step.approver_username || step.approver_role}
+                            </span>
+                            <button onClick={() => decideStep(step.id, 'approved')}>Approve</button>
+                            <button onClick={() => decideStep(step.id, 'rejected')}>Reject</button>
+                          </div>
+                        )
+                      })()}
+                      {(d.status === 'approved' || d.status === 'archived') && '—'}
+                    </td>
                     <td>{d.version}</td>
                     <td>{d.owner_username || '—'}</td>
                     <td>{d.reviewer_username || '—'}</td>
                     <td>{d.approver_username || '—'}</td>
                     <td>
-                      {d.file && <button onClick={() => download(d)} style={{ marginRight: 4 }}>Download</button>}
-                      {replaceFileId === d.id ? (
-                        <>
-                          <input
-                            type="file" accept="application/pdf"
-                            onChange={(e) => setReplaceFile(e.target.files[0])}
-                            style={{ width: 110 }}
-                          />
-                          <button onClick={() => uploadReplacementFile(d)} style={{ marginLeft: 4 }}>Upload</button>
-                        </>
-                      ) : (
-                        <button onClick={() => { setReplaceFileId(d.id); setReplaceFile(null) }}>
-                          {d.file ? 'Replace file' : 'Attach file'}
-                        </button>
-                      )}
+                      <div className="cell-actions">
+                        {d.file && <button onClick={() => download(d)}>Download</button>}
+                        {replaceFileId === d.id ? (
+                          <>
+                            <input
+                              type="file" accept="application/pdf"
+                              onChange={(e) => setReplaceFile(e.target.files[0])}
+                              style={{ width: 110 }}
+                            />
+                            <button onClick={() => uploadReplacementFile(d)}>Upload</button>
+                          </>
+                        ) : (
+                          <button onClick={() => { setReplaceFileId(d.id); setReplaceFile(null) }}>
+                            {d.file ? 'Replace file' : 'Attach file'}
+                          </button>
+                        )}
+                      </div>
                     </td>
                     <td>{new Date(d.updated_at).toLocaleString()}</td>
                     <td>
-                      <button onClick={() => startEdit(d)} style={{ marginRight: 4 }}>Edit</button>
-                      <button onClick={() => remove(d)}>Delete</button>
+                      <div className="cell-actions">
+                        <button onClick={() => startEdit(d)}>Edit</button>
+                        {d.status === 'approved' && (
+                          <button onClick={() => archiveDocument(d)}>Archive</button>
+                        )}
+                        <button onClick={() => remove(d)}>Delete</button>
+                      </div>
                     </td>
                   </tr>
                 )

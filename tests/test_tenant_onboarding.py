@@ -160,6 +160,10 @@ class MembershipApiTests(TestCase):
                 user__username='brand_new_auditor', tenant=tenant, role='auditor',
             ).exists()
         )
+        # A password they didn't choose themselves — must be changed
+        # before it can actually be used to log in (see test_part11.py's
+        # MustChangePasswordTests for the login-side enforcement).
+        self.assertTrue(User.objects.get(username='brand_new_auditor').must_change_password)
 
         # An email address was given, so an invite email should have gone
         # out with the generated credentials (best-effort — Django's test
@@ -201,3 +205,57 @@ class MembershipApiTests(TestCase):
         )
         self.assertEqual(resp.status_code, 403)
         self.assertFalse(User.objects.filter(username='should_not_exist').exists())
+
+
+class MembershipResetPasswordTests(TestCase):
+    def setUp(self):
+        self.tenant = make_tenant('resetpwtest')
+        self.host = f'{self.tenant.schema_name}.localhost'
+        self.admin = User.objects.create_user('reset_admin', 'ra@example.com', 'pass12345')
+        Membership.objects.create(user=self.admin, tenant=self.tenant, role=Membership.Role.ADMIN)
+        self.target_user = User.objects.create_user('reset_target', 'rt@example.com', 'OriginalPass123')
+        self.target_user.must_change_password = False
+        self.target_user.save()
+        self.membership = Membership.objects.create(user=self.target_user, tenant=self.tenant, role=Membership.Role.USER)
+
+        self.api = APIClient()
+        self.api.force_authenticate(user=self.admin)
+
+    def test_non_admin_cannot_reset_someone_elses_password(self):
+        api = APIClient()
+        api.force_authenticate(user=self.target_user)
+        resp = api.post(f'/api/tenant/members/{self.membership.pk}/reset-password/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_admin_reset_invalidates_the_old_password_and_requires_a_change(self):
+        resp = self.api.post(f'/api/tenant/members/{self.membership.pk}/reset-password/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertIn('generated_password', resp.data)
+
+        self.target_user.refresh_from_db()
+        self.assertFalse(self.target_user.check_password('OriginalPass123'))
+        self.assertTrue(self.target_user.check_password(resp.data['generated_password']))
+        self.assertTrue(self.target_user.must_change_password)
+
+        # The new (admin-issued) password works, but login is blocked
+        # pending a change — not just handed a token outright.
+        login_resp = self.api.post(
+            '/api/accounts/token/',
+            {'username': 'reset_target', 'password': resp.data['generated_password']},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(login_resp.status_code, 403)
+        self.assertTrue(login_resp.data['must_change_password'])
+
+    def test_reset_clears_an_existing_lockout(self):
+        self.target_user.failed_login_count = 5
+        from django.utils import timezone
+        import datetime
+        self.target_user.locked_until = timezone.now() + datetime.timedelta(minutes=15)
+        self.target_user.save()
+
+        self.api.post(f'/api/tenant/members/{self.membership.pk}/reset-password/', HTTP_HOST=self.host)
+
+        self.target_user.refresh_from_db()
+        self.assertEqual(self.target_user.failed_login_count, 0)
+        self.assertIsNone(self.target_user.locked_until)

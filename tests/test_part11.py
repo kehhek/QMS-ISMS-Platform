@@ -5,7 +5,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 from django.core.cache import cache
 from django.db import connection
-from django.test import TestCase
+from django.test import Client as DjangoTestClient, TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
@@ -183,6 +183,71 @@ class AccountLockoutTests(TestCase):
         self.assertIsNone(self.user.locked_until)
 
 
+class AdminLoginLockoutTests(TestCase):
+    """Part11LockoutBackend (accounts/backends.py) is what makes this
+    pass — Django admin's own /admin/login/ used to authenticate via the
+    plain default ModelBackend, which has no idea failed_login_count/
+    locked_until exist, so repeated wrong passwords there never
+    triggered a lockout at all. This is the same protection
+    AccountLockoutTests already covers for the API login endpoints,
+    exercised through /admin/login/ instead — a different Django view
+    entirely, but the same authenticate() call underneath now that the
+    backend itself is where lockout enforcement lives."""
+
+    def setUp(self):
+        from django.conf import settings
+        self.settings = settings
+        self.tenant = make_tenant('adminlockouttest')
+        self.host = f'{self.tenant.schema_name}.localhost'
+        self.admin = make_member(self.tenant, 'adminlock_admin', Membership.Role.ADMIN, password='RealPassword123')
+
+    def _attempt_admin_login(self, password, client=None):
+        client = client or DjangoTestClient()
+        return client.post(
+            '/admin/login/', {'username': 'adminlock_admin', 'password': password},
+            HTTP_HOST=self.host,
+        )
+
+    def test_admin_login_locks_after_max_failed_attempts(self):
+        for _ in range(self.settings.PART11_MAX_FAILED_LOGINS):
+            self._attempt_admin_login('wrong-password')
+
+        self.admin.refresh_from_db()
+        self.assertTrue(self.admin.is_locked())
+
+        # Even the correct password is refused once locked.
+        resp = self._attempt_admin_login('RealPassword123')
+        # A failed admin login re-renders the login form (200) rather
+        # than redirecting (302, which only a successful login does).
+        self.assertEqual(resp.status_code, 200)
+        self.admin.refresh_from_db()
+        self.assertTrue(self.admin.is_locked())
+
+    def test_admin_login_does_not_double_count_failures(self):
+        self._attempt_admin_login('wrong-password')
+        self._attempt_admin_login('wrong-password')
+        self.admin.refresh_from_db()
+        self.assertEqual(self.admin.failed_login_count, 2)
+
+    def test_a_lockout_started_via_the_api_also_blocks_admin_login(self):
+        """The lockout is a property of the account, not of whichever
+        view happened to trigger it — enforced in one shared backend
+        now, not duplicated per view."""
+        api = APIClient()
+        for _ in range(self.settings.PART11_MAX_FAILED_LOGINS):
+            api.post(
+                '/api/accounts/token/', {'username': 'adminlock_admin', 'password': 'wrong-password'},
+                format='json', HTTP_HOST=self.host,
+            )
+        self.admin.refresh_from_db()
+        self.assertTrue(self.admin.is_locked())
+
+        client = DjangoTestClient()
+        resp = self._attempt_admin_login('RealPassword123', client=client)
+        self.assertEqual(resp.status_code, 200)  # refused, form re-rendered
+        self.assertNotIn('_auth_user_id', client.session)
+
+
 class PasswordPolicyTests(TestCase):
     # TenantMainMiddleware resolves a tenant from the Host header before
     # any view runs — register() needs *some* resolvable domain to be
@@ -315,6 +380,83 @@ class PasswordExpiryEnforcementTests(TestCase):
             format='json', HTTP_HOST=self.host,
         )
         self.assertEqual(old_login.status_code, 400)
+
+
+class MustChangePasswordTests(TestCase):
+    """A password an admin handed someone (invite or reset) rather than
+    one they chose themselves — must be replaced before it can actually
+    log in, same enforcement shape as password_expired but a distinct
+    reason (see accounts/models.py User.must_change_password)."""
+
+    def setUp(self):
+        cache.clear()
+        self.tenant = make_tenant('mustchangepw')
+        self.host = f'{self.tenant.schema_name}.localhost'
+        self.user = make_member(self.tenant, 'mustchange_user', Membership.Role.USER, password='TempPass123')
+        self.user.must_change_password = True
+        self.user.save()
+
+    def test_token_login_is_blocked_until_the_password_is_changed(self):
+        api = APIClient()
+        resp = api.post(
+            '/api/accounts/token/', {'username': 'mustchange_user', 'password': 'TempPass123'},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(resp.data['must_change_password'])
+        self.assertNotIn('password_expired', resp.data)
+
+    def test_session_login_is_also_blocked(self):
+        api = APIClient()
+        resp = api.post(
+            '/api/accounts/login/', {'username': 'mustchange_user', 'password': 'TempPass123'},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(resp.data['must_change_password'])
+
+    def test_wrong_password_is_still_just_a_login_failure_not_a_leak(self):
+        # A wrong password on a must-change account looks exactly like a
+        # wrong password anywhere else — it doesn't first confirm the
+        # account exists and needs a change before checking credentials.
+        api = APIClient()
+        resp = api.post(
+            '/api/accounts/token/', {'username': 'mustchange_user', 'password': 'totally-wrong'},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_the_same_change_expired_endpoint_clears_the_flag_and_issues_a_token(self):
+        api = APIClient()
+        resp = api.post(
+            '/api/accounts/password/change-expired/',
+            {'username': 'mustchange_user', 'old_password': 'TempPass123', 'new_password': 'MyOwnChoice123'},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertIn('token', resp.data)
+
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.must_change_password)
+
+        # Now logs in normally with the new password, no more block.
+        login_resp = api.post(
+            '/api/accounts/token/', {'username': 'mustchange_user', 'password': 'MyOwnChoice123'},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(login_resp.status_code, 200)
+
+    def test_a_voluntary_change_password_call_also_clears_the_flag(self):
+        api = APIClient()
+        api.force_authenticate(user=self.user)
+        resp = api.post(
+            '/api/accounts/password/change/',
+            {'old_password': 'TempPass123', 'new_password': 'MyOwnChoice123'},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.must_change_password)
 
 
 class ChangePasswordViewTests(TestCase):

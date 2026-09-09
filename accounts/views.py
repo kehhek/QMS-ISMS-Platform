@@ -18,7 +18,7 @@ from core.models import AuditLog
 from project.notifications import send_notification_email
 from .serializers import (
     TenantOnboardSerializer, RegisterSerializer, ChangePasswordSerializer, ExpiredPasswordChangeSerializer,
-    PasswordResetRequestSerializer, PasswordResetConfirmSerializer,
+    PasswordResetRequestSerializer, PasswordResetConfirmSerializer, MyProfileSerializer,
 )
 from .security import check_lockout, record_failed_login, record_successful_login
 from rest_framework.authentication import SessionAuthentication, BasicAuthentication
@@ -212,30 +212,44 @@ class LoggingObtainAuthToken(ObtainAuthToken):
                 )
                 return Response({'detail': lockout_message}, status=status.HTTP_403_FORBIDDEN)
 
+        # Part11LockoutBackend (see accounts/backends.py) is what actually
+        # records failed_login_count/locked_until now — this serializer's
+        # validate() calls Django's authenticate(), which routes through
+        # that backend. Nothing here needs to call record_failed_login/
+        # record_successful_login itself anymore (it used to, which would
+        # now double-count against the backend's own bookkeeping).
         serializer = self.serializer_class(data=request.data, context={'request': request})
         if serializer.is_valid():
             user = serializer.validated_data['user']
 
+            # A password an admin handed them (a brand-new invite, or a
+            # reset) rather than one they chose — withhold the token
+            # until they set their own via ExpiredPasswordChangeView
+            # (same re-verify-then-set flow the expiry case below uses;
+            # it doesn't care which reason sent someone there).
+            if user.must_change_password:
+                log_action(user, AuditLog.Action.LOGIN_FAILED, user, metadata={'method': 'token', 'reason': 'must_change_password'})
+                return Response(
+                    {'detail': 'An administrator set this password for you — choose your own to continue.', 'must_change_password': True},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
             # Part 11 §11.300(b): periodic password revision. The password
-            # itself was correct — record the successful auth attempt as
-            # such (resets the lockout counter) but withhold the token
-            # until they set a new one via ExpiredPasswordChangeView,
-            # which re-verifies the same credentials.
+            # itself was correct — withhold the token until they set a new
+            # one via ExpiredPasswordChangeView, which re-verifies the
+            # same credentials.
             if user.password_expired(settings.PART11_PASSWORD_MAX_AGE_DAYS):
-                record_successful_login(user)
                 log_action(user, AuditLog.Action.LOGIN_FAILED, user, metadata={'method': 'token', 'reason': 'password_expired'})
                 return Response(
                     {'detail': 'Your password has expired and must be changed.', 'password_expired': True},
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
-            record_successful_login(user)
             token, _ = Token.objects.get_or_create(user=user)
             log_action(user, AuditLog.Action.LOGIN, user, metadata={'method': 'token'})
             return Response({'token': token.key})
 
         if existing_user:
-            record_failed_login(existing_user)
             log_action(None, AuditLog.Action.LOGIN_FAILED, existing_user, metadata={'method': 'token'})
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -257,23 +271,30 @@ class LoginView(APIView):
                 )
                 return Response({'detail': lockout_message}, status=status.HTTP_403_FORBIDDEN)
 
+        # Same reasoning as LoggingObtainAuthToken above: authenticate()
+        # itself now routes through Part11LockoutBackend, which already
+        # records the attempt — this view just reacts to the outcome.
         user = authenticate(request, username=username, password=password)
         if user is not None and user.is_active:
+            if user.must_change_password:
+                log_action(user, AuditLog.Action.LOGIN_FAILED, user, metadata={'method': 'session', 'reason': 'must_change_password'})
+                return Response(
+                    {'detail': 'An administrator set this password for you — choose your own to continue.', 'must_change_password': True},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
             if user.password_expired(settings.PART11_PASSWORD_MAX_AGE_DAYS):
-                record_successful_login(user)
                 log_action(user, AuditLog.Action.LOGIN_FAILED, user, metadata={'method': 'session', 'reason': 'password_expired'})
                 return Response(
                     {'detail': 'Your password has expired and must be changed.', 'password_expired': True},
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
-            record_successful_login(user)
             login(request, user)
             log_action(user, AuditLog.Action.LOGIN, user, metadata={'method': 'session'})
             return Response({'ok': True, 'username': user.username})
 
         if existing_user:
-            record_failed_login(existing_user)
             log_action(None, AuditLog.Action.LOGIN_FAILED, existing_user, metadata={'method': 'session'})
         return Response({'ok': False}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -284,6 +305,27 @@ class LogoutView(APIView):
     def post(self, request):
         logout(request)
         return Response({'ok': True})
+
+
+class MyProfileView(APIView):
+    """View/edit your own account details — name, email, and (read-only)
+    your role in whichever tenant this request is for. Deliberately has
+    no pk in the URL at all: it always operates on request.user, so
+    there's no way to reach anyone else's account through it, unlike the
+    UserViewSet this app used to have (see MyProfileSerializer's
+    docstring) and removed as a cross-tenant leak."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response(MyProfileSerializer(request.user).data)
+
+    def patch(self, request):
+        serializer = MyProfileSerializer(request.user, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        log_action(request.user, AuditLog.Action.UPDATE, request.user, metadata={'fields': list(request.data.keys())})
+        return Response(serializer.data)
 
 
 class ChangePasswordView(APIView):
@@ -303,19 +345,23 @@ class ChangePasswordView(APIView):
             return Response({'old_password': ['Incorrect password.']}, status=status.HTTP_400_BAD_REQUEST)
 
         request.user.set_password(data['new_password'])
+        request.user.must_change_password = False
         request.user.save()
         log_action(request.user, AuditLog.Action.PASSWORD_CHANGED, request.user)
         return Response({'ok': True})
 
 
 class ExpiredPasswordChangeView(APIView):
-    """Part 11 §11.300(b): the self-service escape hatch for someone
-    LoggingObtainAuthToken/LoginView just refused to log in because
-    password_expired() is true. Re-verifies username+old password (the
-    same two things a login would check) rather than trusting the
-    username alone, then issues a token exactly like a successful login
-    would — so the frontend can go straight from "expired" to "logged in
-    with the new password" in one step.
+    """The self-service escape hatch for someone LoggingObtainAuthToken/
+    LoginView just refused a token to — either Part 11 §11.300(b)
+    password_expired(), or must_change_password (a temporary password an
+    admin handed them via invite or reset). Same fix either way: prove
+    you know the current password, then set a new one. Re-verifies
+    username+old password (the same two things a login would check)
+    rather than trusting the username alone, then issues a token exactly
+    like a successful login would — so the frontend can go straight from
+    the "must change" screen to "logged in with the new password" in one
+    step.
     """
 
     authentication_classes = []
@@ -342,8 +388,9 @@ class ExpiredPasswordChangeView(APIView):
 
         record_successful_login(user)
         user.set_password(data['new_password'])
+        user.must_change_password = False
         user.save()
-        log_action(user, AuditLog.Action.PASSWORD_CHANGED, user, metadata={'reason': 'expired'})
+        log_action(user, AuditLog.Action.PASSWORD_CHANGED, user, metadata={'reason': 'expired_or_must_change'})
 
         token, _ = Token.objects.get_or_create(user=user)
         log_action(user, AuditLog.Action.LOGIN, user, metadata={'method': 'token', 'after': 'password_change'})

@@ -12,6 +12,15 @@ class User(AbstractUser):
     password_changed_at = models.DateTimeField(default=timezone.now)
     failed_login_count = models.PositiveIntegerField(default=0)
     locked_until = models.DateTimeField(null=True, blank=True)
+    # Set whenever an admin hands this user a password they didn't choose
+    # themselves — a brand-new invite or an admin-initiated reset (see
+    # tenants/views.py MembershipViewSet.create/reset_password) — and
+    # cleared the moment they successfully set their own (see
+    # ChangePasswordView/ExpiredPasswordChangeView below). Checked at
+    # login the same way password_expired() is, forcing a change before
+    # a token is ever issued rather than leaving a temporary password
+    # usable indefinitely.
+    must_change_password = models.BooleanField(default=False)
 
     def set_password(self, raw_password):
         super().set_password(raw_password)

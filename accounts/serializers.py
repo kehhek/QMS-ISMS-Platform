@@ -69,6 +69,35 @@ class RegisterSerializer(serializers.Serializer):
 # platform user and Django Group, reachable by any tenant's own admin.
 
 
+class MyProfileSerializer(serializers.ModelSerializer):
+    """Unlike the removed UserSerializer above, this is never looked up
+    by pk — MyProfileView always instantiates it with request.user, so
+    there's no way to read or edit anyone else's account through it.
+    username/is_active/is_staff/is_superuser are deliberately excluded
+    entirely (not just read-only) — none of those are something a user
+    should ever set on themselves, even accidentally."""
+
+    role = serializers.SerializerMethodField()
+
+    class Meta:
+        model = get_user_model()
+        fields = (
+            'username', 'first_name', 'last_name', 'email', 'role', 'is_superuser',
+            'date_joined', 'last_login',
+        )
+        read_only_fields = ('username', 'is_superuser', 'date_joined', 'last_login')
+
+    def get_role(self, obj):
+        from django.db import connection
+        from tenants.models import Membership
+
+        tenant = getattr(connection, 'tenant', None)
+        if tenant is None:
+            return None
+        membership = Membership.objects.filter(user=obj, tenant=tenant).first()
+        return membership.role if membership else None
+
+
 class NewPasswordMixin:
     def validate_new_password(self, value):
         # Same Part 11 §11.300(a) enforcement as registration

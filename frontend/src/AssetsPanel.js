@@ -149,8 +149,10 @@ export default function AssetsPanel({ token }) {
                     </td>
                     <td>—</td>
                     <td>
-                      <button onClick={saveEdit} style={{ marginRight: 4 }}>Save</button>
-                      <button onClick={cancelEdit}>Cancel</button>
+                      <div className="cell-actions">
+                        <button onClick={() => saveEdit()}>Save</button>
+                        <button onClick={cancelEdit}>Cancel</button>
+                      </div>
                     </td>
                     <td>—</td>
                   </tr>
@@ -177,25 +179,28 @@ export default function AssetsPanel({ token }) {
                       )}
                     </td>
                     <td>
-                      <button onClick={() => startEdit(a)} style={{ marginRight: 4 }}>Edit</button>
-                      <button onClick={() => remove(a, `"${a.name}"`)}>Delete</button>
+                      <div className="cell-actions">
+                        <button onClick={() => startEdit(a)}>Edit</button>
+                        <button onClick={() => remove(a, `"${a.name}"`)}>Delete</button>
+                      </div>
                     </td>
                     <td>
-                      <select
-                        value={reviewDraftFor(a.id).outcome}
-                        onChange={(e) => setReviewDraft(a.id, { outcome: e.target.value })}
-                        style={{ marginRight: 4 }}
-                      >
-                        <option value="confirmed">Confirm accurate</option>
-                        <option value="needs_update">Needs update</option>
-                      </select>
-                      <input
-                        placeholder="Notes"
-                        value={reviewDraftFor(a.id).notes}
-                        onChange={(e) => setReviewDraft(a.id, { notes: e.target.value })}
-                        style={{ width: 100, marginRight: 4 }}
-                      />
-                      <button onClick={() => submitReview(a)}>Record</button>
+                      <div className="cell-actions">
+                        <select
+                          value={reviewDraftFor(a.id).outcome}
+                          onChange={(e) => setReviewDraft(a.id, { outcome: e.target.value })}
+                        >
+                          <option value="confirmed">Confirm accurate</option>
+                          <option value="needs_update">Needs update</option>
+                        </select>
+                        <input
+                          placeholder="Notes"
+                          value={reviewDraftFor(a.id).notes}
+                          onChange={(e) => setReviewDraft(a.id, { notes: e.target.value })}
+                          style={{ width: 100 }}
+                        />
+                        <button onClick={() => submitReview(a)}>Record</button>
+                      </div>
                     </td>
                   </tr>
                 )

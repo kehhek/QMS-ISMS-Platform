@@ -204,6 +204,17 @@ class TrainingRecordTests(TestCase):
         )
         self.assertEqual(resp.status_code, 403)
 
+    def test_auditor_cannot_assign_training_either(self):
+        # Tightened from admin/auditor to admin-only.
+        auditor = make_member(self.tenant, 'train_auditor', Membership.Role.AUDITOR)
+        api = APIClient()
+        api.force_authenticate(user=auditor)
+        resp = api.post(
+            '/api/training-records/', {'user': self.other_user.pk, 'title': 'Should also fail'},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 403)
+
     def test_trainee_can_mark_their_own_record_complete(self):
         with schema_context(self.tenant.schema_name):
             from core.models import TrainingRecord
@@ -224,7 +235,11 @@ class TrainingRecordTests(TestCase):
         api = APIClient()
         api.force_authenticate(user=self.other_user)
         resp = api.post(f'/api/training-records/{record.pk}/complete/', HTTP_HOST=self.host)
-        self.assertEqual(resp.status_code, 403)
+        # 404, not 403 — a non-admin's queryset (see
+        # TrainingRecordViewSet.get_queryset) is pinned to their own
+        # records, so someone else's record doesn't even resolve via
+        # get_object() before any ownership check runs.
+        self.assertEqual(resp.status_code, 404)
 
     def test_admin_can_complete_anyone_s_training_record(self):
         with schema_context(self.tenant.schema_name):
@@ -273,6 +288,25 @@ class TrainingVideoTests(TestCase):
 
     def test_plain_user_cannot_upload_a_video(self):
         api, resp = self._upload(self.user1)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_auditor_cannot_upload_a_video(self):
+        # Tightened from admin/auditor to admin-only for upload, publish,
+        # and training-record assignment (this whole test class + the
+        # analogous ones below) — auditor keeps read access, same as a
+        # plain user, but none of the management actions.
+        auditor = make_member(self.tenant, 'video_auditor', Membership.Role.AUDITOR)
+        api, resp = self._upload(auditor)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_auditor_cannot_publish_a_video(self):
+        auditor = make_member(self.tenant, 'video_auditor2', Membership.Role.AUDITOR)
+        _admin_api, video = self._upload(self.admin)
+        video_id = video.data['id']
+
+        auditor_api = APIClient()
+        auditor_api.force_authenticate(user=auditor)
+        resp = auditor_api.post(f'/api/training-videos/{video_id}/publish/', HTTP_HOST=self.host)
         self.assertEqual(resp.status_code, 403)
 
     def test_publishing_assigns_every_active_member_and_is_idempotent(self):
@@ -332,7 +366,9 @@ class TrainingVideoTests(TestCase):
         user2_api = APIClient()
         user2_api.force_authenticate(user=self.user2)
         resp = user2_api.post(f'/api/training-records/{other_record.pk}/start/', HTTP_HOST=self.host)
-        self.assertEqual(resp.status_code, 403)
+        # 404 — a non-admin's queryset only ever contains their own
+        # records (see TrainingRecordViewSet.get_queryset).
+        self.assertEqual(resp.status_code, 404)
 
     def test_streaming_the_video_round_trips_the_uploaded_bytes(self):
         api, video = self._upload(self.admin)
@@ -353,6 +389,74 @@ class TrainingVideoTests(TestCase):
         resp = api.get(f'/api/training-records/?video={video_id}', HTTP_HOST=self.host)
         self.assertEqual(resp.data['count'], 3)
         self.assertTrue(all(r['video'] == video_id for r in resp.data['results']))
+
+    def test_plain_user_only_sees_videos_assigned_to_them(self):
+        # A second video that's never published to user1 — it shouldn't
+        # show up on their list at all, only the one they're assigned.
+        api, assigned_video = self._upload(self.admin)
+        api.post(f'/api/training-videos/{assigned_video.data["id"]}/publish/', HTTP_HOST=self.host)
+        _, unassigned_video = self._upload(self.admin)
+
+        user1_api = APIClient()
+        user1_api.force_authenticate(user=self.user1)
+        resp = user1_api.get('/api/training-videos/', HTTP_HOST=self.host)
+        video_ids = {v['id'] for v in resp.data['results']}
+        self.assertEqual(video_ids, {assigned_video.data['id']})
+
+    def test_auditor_only_sees_videos_assigned_to_them_too(self):
+        # This feature gives auditor no elevated read access — same
+        # scoping as a plain user, not admin's full-library view.
+        auditor = make_member(self.tenant, 'video_auditor3', Membership.Role.AUDITOR)
+        api, video = self._upload(self.admin)
+        api.post(f'/api/training-videos/{video.data["id"]}/publish/', HTTP_HOST=self.host)
+
+        auditor_api = APIClient()
+        auditor_api.force_authenticate(user=auditor)
+        resp = auditor_api.get('/api/training-videos/', HTTP_HOST=self.host)
+        # Published to every active member, including this auditor.
+        self.assertEqual([v['id'] for v in resp.data['results']], [video.data['id']])
+
+    def test_plain_user_only_sees_their_own_training_records(self):
+        api, video = self._upload(self.admin)
+        api.post(f'/api/training-videos/{video.data["id"]}/publish/', HTTP_HOST=self.host)
+
+        user1_api = APIClient()
+        user1_api.force_authenticate(user=self.user1)
+        resp = user1_api.get('/api/training-records/', HTTP_HOST=self.host)
+        self.assertTrue(all(r['username'] == 'video_user1' for r in resp.data['results']))
+        self.assertEqual(resp.data['count'], 1)
+
+    def test_plain_user_cannot_read_someone_elses_training_record_directly(self):
+        api, video = self._upload(self.admin)
+        api.post(f'/api/training-videos/{video.data["id"]}/publish/', HTTP_HOST=self.host)
+        with schema_context(self.tenant.schema_name):
+            from core.models import TrainingRecord
+            other_record = TrainingRecord.objects.get(video_id=video.data['id'], user=self.user2)
+
+        user1_api = APIClient()
+        user1_api.force_authenticate(user=self.user1)
+        resp = user1_api.get(f'/api/training-records/{other_record.pk}/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 404)
+
+    def test_only_admin_can_view_team_completion(self):
+        auditor = make_member(self.tenant, 'video_auditor4', Membership.Role.AUDITOR)
+        api, video = self._upload(self.admin)
+        video_id = video.data['id']
+
+        user_api = APIClient()
+        user_api.force_authenticate(user=self.user1)
+        auditor_api = APIClient()
+        auditor_api.force_authenticate(user=auditor)
+
+        self.assertEqual(
+            user_api.get(f'/api/training-videos/{video_id}/team-completion/', HTTP_HOST=self.host).status_code, 403,
+        )
+        self.assertEqual(
+            auditor_api.get(f'/api/training-videos/{video_id}/team-completion/', HTTP_HOST=self.host).status_code, 403,
+        )
+        self.assertEqual(
+            api.get(f'/api/training-videos/{video_id}/team-completion/', HTTP_HOST=self.host).status_code, 200,
+        )
 
 
 class AccessRegisterTests(TestCase):
@@ -508,6 +612,10 @@ class TrainingQuizAndTeamCompletionTests(TestCase):
     def test_trainee_facing_quiz_never_exposes_the_correct_answer(self):
         video = self._upload_video()
         self._add_question(video['id'], correct_index=1)
+        # Published (assigned) to the trainee — a video's quiz is only
+        # reachable for a video actually assigned to you (see
+        # TrainingVideoViewSet.get_queryset).
+        self.api.post(f'/api/training-videos/{video["id"]}/publish/', HTTP_HOST=self.host)
 
         trainee_api = APIClient()
         trainee_api.force_authenticate(user=self.trainee)
@@ -523,6 +631,26 @@ class TrainingQuizAndTeamCompletionTests(TestCase):
         trainee_api.force_authenticate(user=self.trainee)
         resp = trainee_api.get(f'/api/quiz-questions/?video={video["id"]}', HTTP_HOST=self.host)
         self.assertEqual(resp.status_code, 403)
+
+    def test_auditor_cannot_manage_or_read_quiz_questions(self):
+        # Tightened from admin/auditor to admin-only — "manage quiz" is
+        # an admin-exclusive capability now, not a compliance-oversight
+        # read.
+        video = self._upload_video()
+        self._add_question(video['id'])
+        auditor = make_member(self.tenant, 'quiz_auditor', Membership.Role.AUDITOR)
+        auditor_api = APIClient()
+        auditor_api.force_authenticate(user=auditor)
+
+        read = auditor_api.get(f'/api/quiz-questions/?video={video["id"]}', HTTP_HOST=self.host)
+        self.assertEqual(read.status_code, 403)
+
+        create = auditor_api.post(
+            '/api/quiz-questions/',
+            {'video': video['id'], 'order': 1, 'text': 'Another one?', 'options': ['A', 'B'], 'correct_index': 0},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(create.status_code, 403)
 
     def test_failing_the_quiz_reassigns_instead_of_completing(self):
         video = self._upload_video(pass_percent=100)
@@ -595,7 +723,9 @@ class TrainingQuizAndTeamCompletionTests(TestCase):
             f'/api/training-records/{record_id}/submit-quiz/', {'answers': [1]},
             format='json', HTTP_HOST=self.host,
         )
-        self.assertEqual(resp.status_code, 403)
+        # 404 — a non-admin's queryset only ever contains their own
+        # records (see TrainingRecordViewSet.get_queryset).
+        self.assertEqual(resp.status_code, 404)
 
     def test_team_completion_is_scoped_to_the_current_tenant_only(self):
         # Regression test for a real cross-tenant leak caught during

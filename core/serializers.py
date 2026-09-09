@@ -64,24 +64,33 @@ class DocumentSerializer(serializers.ModelSerializer):
     owner_username = serializers.CharField(source='owner.username', read_only=True, default=None)
     reviewer_username = serializers.CharField(source='reviewer.username', read_only=True, default=None)
     approver_username = serializers.CharField(source='approver.username', read_only=True, default=None)
+    archived_by_username = serializers.CharField(source='archived_by.username', read_only=True, default=None)
 
     class Meta:
         model = Document
         fields = (
             'id', 'doc_id', 'category', 'title', 'content', 'file', 'version', 'status', 'classification',
             'owner', 'owner_username', 'reviewer', 'reviewer_username', 'approver', 'approver_username',
-            'reviewed_at', 'created_at', 'updated_at',
+            'reviewed_at', 'archived_at', 'archived_by', 'archived_by_username', 'archived_reason',
+            'created_at', 'updated_at',
         )
         # status is read-only here on purpose: it must only ever change via
         # WorkflowStepViewSet.decide() completing an approval (which sets it
-        # directly on the model, bypassing this serializer entirely) — never
-        # a plain PATCH. Otherwise anyone with document-write access could
-        # set status="approved" themselves, skipping the approval workflow
-        # and the 21 CFR Part 11 electronic signature it requires entirely.
-        # reviewer/approver ARE plain-writable — they're informational
-        # assignment, not the enforced approval gate (see Document's
-        # docstring comment on those fields).
-        read_only_fields = ('version', 'status', 'created_at', 'updated_at')
+        # directly on the model, bypassing this serializer entirely), the
+        # same workflow's rejection reverting it to Draft, DocumentViewSet's
+        # archive action, or a direct edit to an Approved document's
+        # content/file forcing it back to Draft for re-approval (see
+        # DocumentViewSet.perform_update) — never a plain PATCH. Otherwise
+        # anyone with document-write access could set status="approved"
+        # themselves, skipping the approval workflow and the 21 CFR Part 11
+        # electronic signature it requires entirely. reviewer/approver ARE
+        # plain-writable — they're informational assignment, not the
+        # enforced approval gate (see Document's docstring comment on
+        # those fields). archived_* are likewise only ever set by the
+        # archive action, never a plain PATCH.
+        read_only_fields = (
+            'version', 'status', 'archived_at', 'archived_by', 'archived_reason', 'created_at', 'updated_at',
+        )
 
     def to_representation(self, instance):
         data = super().to_representation(instance)

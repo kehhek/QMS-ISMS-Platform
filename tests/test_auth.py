@@ -79,3 +79,67 @@ class RemovedCrossTenantUserManagementTests(TestCase):
 
         self.assertEqual(api.get('/api/accounts/users/', HTTP_HOST=host).status_code, 404)
         self.assertEqual(api.get('/api/accounts/groups/', HTTP_HOST=host).status_code, 404)
+
+
+class MyProfileTests(TestCase):
+    """MyProfileView — unlike the removed UserViewSet above, this never
+    takes a pk at all, so there's no way to reach anyone else's account
+    through it. Always operates on request.user."""
+
+    def setUp(self):
+        connection.set_schema_to_public()
+        self.tenant = Client.objects.create(schema_name='profiletest', name='profiletest')
+        Domain.objects.create(domain='profiletest.localhost', tenant=self.tenant, is_primary=True)
+        self.host = f'{self.tenant.schema_name}.localhost'
+
+        User = get_user_model()
+        self.user = User.objects.create_user('profile_user', 'pu@example.com', 'pass12345')
+        Membership.objects.create(user=self.user, tenant=self.tenant, role=Membership.Role.AUDITOR)
+
+        self.other_tenant = Client.objects.create(schema_name='profileother', name='profileother')
+        Domain.objects.create(domain='profileother.localhost', tenant=self.other_tenant, is_primary=True)
+        Membership.objects.create(user=self.user, tenant=self.other_tenant, role=Membership.Role.USER)
+
+        self.api = APIClient()
+        self.api.force_authenticate(user=self.user)
+
+    def test_requires_authentication(self):
+        api = APIClient()
+        resp = api.get('/api/accounts/me/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 401)
+
+    def test_returns_own_profile_including_role_for_the_current_tenant(self):
+        resp = self.api.get('/api/accounts/me/', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['username'], 'profile_user')
+        self.assertEqual(resp.data['role'], 'auditor')
+
+    def test_role_reflects_whichever_tenant_the_request_is_for(self):
+        # Same user, two different tenants, two different roles — the
+        # profile's role must track the request's own tenant, not just
+        # whichever membership happens to be found first.
+        other_host = f'{self.other_tenant.schema_name}.localhost'
+        resp = self.api.get('/api/accounts/me/', HTTP_HOST=other_host)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['role'], 'user')
+
+    def test_can_update_name_and_email(self):
+        resp = self.api.patch(
+            '/api/accounts/me/', {'first_name': 'Pat', 'last_name': 'User', 'email': 'new@example.com'},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.first_name, 'Pat')
+        self.assertEqual(self.user.email, 'new@example.com')
+
+    def test_cannot_set_username_or_escalate_privilege(self):
+        resp = self.api.patch(
+            '/api/accounts/me/', {'username': 'hacked', 'is_superuser': True, 'is_staff': True},
+            format='json', HTTP_HOST=self.host,
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.username, 'profile_user')
+        self.assertFalse(self.user.is_superuser)
+        self.assertFalse(self.user.is_staff)

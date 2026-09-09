@@ -3,6 +3,7 @@ import { apiFetch } from './api'
 import useCrudPanel from './useCrudPanel'
 import StatusBadge from './StatusBadge'
 import ExportCsvButton from './ExportCsvButton'
+import { requestSignature } from './PromptDialog'
 
 const TYPE_OPTIONS = ['corrective', 'preventive']
 // 'closed' is deliberately excluded here — closing requires the signed
@@ -18,17 +19,17 @@ export default function CorrectiveActionsPanel({ token }) {
     editingId, editForm, setEditForm, startEdit, cancelEdit, saveEdit, remove,
   } = useCrudPanel('/corrective-actions/', token, EMPTY_FORM)
 
-  const closeCapa = (capa) => {
-    // eslint-disable-next-line no-alert
-    const password = window.prompt(
-      'Enter your password to close this CAPA (this is your electronic signature verifying the fix was effective).',
-    )
-    if (!password) return
-    // eslint-disable-next-line no-alert
-    const effectiveness_notes = window.prompt('Effectiveness verification notes (what evidence shows the fix worked?):') || ''
+  const closeCapa = async (capa) => {
+    const result = await requestSignature({
+      title: 'Close this CAPA',
+      message: 'This is your electronic signature verifying the fix was effective.',
+      notesField: { name: 'effectiveness_notes', label: 'Effectiveness verification notes (what evidence shows the fix worked?)' },
+      confirmLabel: 'Close',
+    })
+    if (!result) return
     apiFetch(`/corrective-actions/${capa.id}/close/`, token, {
       method: 'POST',
-      body: JSON.stringify({ password, effectiveness_notes }),
+      body: JSON.stringify({ password: result.password, effectiveness_notes: result.effectiveness_notes || '' }),
     })
       .then(() => { setError(null); load() })
       .catch((err) => setError(err.message))
@@ -106,8 +107,10 @@ export default function CorrectiveActionsPanel({ token }) {
                     />
                   </td>
                   <td>
-                    <button onClick={saveEdit} style={{ marginRight: 4 }}>Save</button>
-                    <button onClick={cancelEdit}>Cancel</button>
+                    <div className="cell-actions">
+                      <button onClick={() => saveEdit()}>Save</button>
+                      <button onClick={cancelEdit}>Cancel</button>
+                    </div>
                   </td>
                 </tr>
               ) : (
@@ -117,20 +120,22 @@ export default function CorrectiveActionsPanel({ token }) {
                   <td>
                     <StatusBadge value={a.status} />
                     {a.status === 'closed' && a.effectiveness_notes && (
-                      <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{a.effectiveness_notes}</div>
+                      <div className="cell-wrap" style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{a.effectiveness_notes}</div>
                     )}
                   </td>
                   <td>{a.root_cause || '—'}</td>
                   <td>{a.owner || '—'}</td>
                   <td>{a.due_date || '—'}</td>
                   <td>
-                    {a.status !== 'closed' && (
-                      <>
-                        <button onClick={() => startEdit(a)} style={{ marginRight: 4 }}>Edit</button>
-                        <button onClick={() => closeCapa(a)} style={{ marginRight: 4 }}>Close</button>
-                      </>
-                    )}
-                    <button onClick={() => remove(a, `"${a.title}"`)}>Delete</button>
+                    <div className="cell-actions">
+                      {a.status !== 'closed' && (
+                        <>
+                          <button onClick={() => startEdit(a)}>Edit</button>
+                          <button onClick={() => closeCapa(a)}>Close</button>
+                        </>
+                      )}
+                      <button onClick={() => remove(a, `"${a.title}"`)}>Delete</button>
+                    </div>
                   </td>
                 </tr>
               )

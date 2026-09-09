@@ -135,12 +135,14 @@ export default function AuditorAccessPanel({ token }) {
                   <td>{a.last_accessed_at ? new Date(a.last_accessed_at).toLocaleString() : 'never'}</td>
                   <td>{a.notes || '—'}</td>
                   <td>
-                    <button onClick={() => copyLink(a)} style={{ marginRight: 4 }}>
-                      {copiedId === a.id ? 'Copied!' : 'Copy link'}
-                    </button>
-                    {s.label === 'active' && (
-                      <button onClick={() => revoke(a)}>Revoke</button>
-                    )}
+                    <div className="cell-actions">
+                      <button onClick={() => copyLink(a)}>
+                        {copiedId === a.id ? 'Copied!' : 'Copy link'}
+                      </button>
+                      {s.label === 'active' && (
+                        <button onClick={() => revoke(a)}>Revoke</button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               )

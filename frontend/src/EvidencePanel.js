@@ -159,8 +159,10 @@ export default function EvidencePanel({ token }) {
                   <td>{new Date(ev.uploaded_at).toLocaleString()}</td>
                   <td><button onClick={() => download(ev)}>Download</button></td>
                   <td>
-                    <button onClick={saveEvidenceEdit} style={{ marginRight: 4 }}>Save</button>
-                    <button onClick={cancelEdit}>Cancel</button>
+                    <div className="cell-actions">
+                      <button onClick={saveEvidenceEdit}>Save</button>
+                      <button onClick={cancelEdit}>Cancel</button>
+                    </div>
                   </td>
                 </tr>
               ) : (
@@ -172,8 +174,10 @@ export default function EvidencePanel({ token }) {
                   <td>{new Date(ev.uploaded_at).toLocaleString()}</td>
                   <td><button onClick={() => download(ev)}>Download</button></td>
                   <td>
-                    <button onClick={() => startEdit(ev)} style={{ marginRight: 4 }}>Edit</button>
-                    <button onClick={() => remove(ev, `"${ev.title}"`)}>Delete</button>
+                    <div className="cell-actions">
+                      <button onClick={() => startEdit(ev)}>Edit</button>
+                      <button onClick={() => remove(ev, `"${ev.title}"`)}>Delete</button>
+                    </div>
                   </td>
                 </tr>
               )

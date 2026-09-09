@@ -122,8 +122,10 @@ export default function RisksPanel({ token }) {
                     />
                   </td>
                   <td>
-                    <button onClick={saveEdit} style={{ marginRight: 4 }}>Save</button>
-                    <button onClick={cancelEdit}>Cancel</button>
+                    <div className="cell-actions">
+                      <button onClick={() => saveEdit()}>Save</button>
+                      <button onClick={cancelEdit}>Cancel</button>
+                    </div>
                   </td>
                 </tr>
               ) : (
@@ -136,8 +138,10 @@ export default function RisksPanel({ token }) {
                   <td>{r.owner || '—'}</td>
                   <td>{r.target_date || '—'}</td>
                   <td>
-                    <button onClick={() => startEdit(r)} style={{ marginRight: 4 }}>Edit</button>
-                    <button onClick={() => remove(r, `"${r.name}"`)}>Delete</button>
+                    <div className="cell-actions">
+                      <button onClick={() => startEdit(r)}>Edit</button>
+                      <button onClick={() => remove(r, `"${r.name}"`)}>Delete</button>
+                    </div>
                   </td>
                 </tr>
               )

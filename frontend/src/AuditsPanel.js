@@ -82,8 +82,10 @@ export default function AuditsPanel({ token }) {
                     />
                   </td>
                   <td>
-                    <button onClick={saveEdit} style={{ marginRight: 4 }}>Save</button>
-                    <button onClick={cancelEdit}>Cancel</button>
+                    <div className="cell-actions">
+                      <button onClick={() => saveEdit()}>Save</button>
+                      <button onClick={cancelEdit}>Cancel</button>
+                    </div>
                   </td>
                 </tr>
               ) : (
@@ -95,8 +97,10 @@ export default function AuditsPanel({ token }) {
                   <td>{a.scheduled_date || '—'}</td>
                   <td>{a.completed_date || '—'}</td>
                   <td>
-                    <button onClick={() => startEdit(a)} style={{ marginRight: 4 }}>Edit</button>
-                    <button onClick={() => remove(a, `"${a.title}"`)}>Delete</button>
+                    <div className="cell-actions">
+                      <button onClick={() => startEdit(a)}>Edit</button>
+                      <button onClick={() => remove(a, `"${a.title}"`)}>Delete</button>
+                    </div>
                   </td>
                 </tr>
               )

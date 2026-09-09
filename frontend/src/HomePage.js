@@ -1,25 +1,7 @@
 import React, { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { formatApiError } from './api'
-
-const FEATURES = [
-  {
-    title: 'Document control',
-    body: 'Versioned documents with multi-step, role-based approval workflows.',
-  },
-  {
-    title: 'Risk & incident management',
-    body: 'Track risks, incidents, suppliers, and the corrective actions that close them out.',
-  },
-  {
-    title: 'ISO 27001 & SOC 2 ready',
-    body: 'All 93 ISO 27001 controls and the SOC 2 Common Criteria, pre-loaded for every org.',
-  },
-  {
-    title: 'Immutable audit trail',
-    body: 'Every action is logged, append-only, enforced at the database level — not just in the UI.',
-  },
-]
+import CyclingPhoto, { HERO_PHOTOS } from './CyclingPhoto'
 
 const PROOF_POINTS = [
   { value: '93', label: 'ISO 27001 Annex A controls, pre-loaded' },
@@ -27,33 +9,76 @@ const PROOF_POINTS = [
   { value: '21 CFR Part 11', label: 'Electronic signatures on every approval' },
 ]
 
-const PLANS = [
-  {
-    key: 'free',
-    name: 'Free',
-    price: '$0',
-    tagline: 'For evaluating the platform',
-    features: ['Up to 3 users', 'Core QMS/ISMS modules', 'Community support'],
-  },
-  {
-    key: 'team',
-    name: 'Team',
-    price: '$49/mo',
-    tagline: 'For a growing compliance team',
-    features: [
-      'Up to 25 users', 'Unlimited approval workflows',
-      'Full ISO 27001 + SOC 2 control catalogs', 'Email support',
-    ],
-    highlighted: true,
-  },
-  {
-    key: 'enterprise',
-    name: 'Enterprise',
-    price: 'Talk to us',
-    tagline: 'For larger organizations',
-    features: ['Unlimited users', 'SSO (coming soon)', 'Dedicated support', 'Custom backup & retention policies'],
-  },
+// The two zigzag feature sections — each pairs real product substance
+// with a small illustrative mockup (built from real column/status names,
+// not lorem ipsum) rather than a stock screenshot we don't have.
+const DOCUMENT_MOCK_ROWS = [
+  { id: 'QMS-014', title: 'Access Control Policy', status: 'Approved', tone: 'success' },
+  { id: 'QMS-021', title: 'Incident Response Plan', status: 'In review', tone: 'warning' },
+  { id: 'QMS-009', title: 'Data Retention SOP', status: 'Draft', tone: 'neutral' },
 ]
+
+const COVERAGE_MOCK_ROWS = [
+  { name: 'ISO 27001', percent: 100 },
+  { name: 'SOC 2', percent: 88 },
+  { name: 'HIPAA', percent: 64 },
+]
+
+function HeroEmailCapture() {
+  const navigate = useNavigate()
+  const [email, setEmail] = useState('')
+
+  const submit = (e) => {
+    e.preventDefault()
+    navigate(`/register${email ? `?email=${encodeURIComponent(email)}` : ''}`)
+  }
+
+  return (
+    <form className="hero-capture" onSubmit={submit}>
+      <input
+        type="email"
+        placeholder="Enter your work email"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+      />
+      <button type="submit" className="pill-btn-dark">Get started</button>
+    </form>
+  )
+}
+
+function DocumentMockCard() {
+  return (
+    <div className="mock-card">
+      <div className="mock-card-header">
+        <span>Doc ID</span><span>Title</span><span>Status</span>
+      </div>
+      {DOCUMENT_MOCK_ROWS.map((row) => (
+        <div className="mock-card-row" key={row.id}>
+          <span className="mock-card-id">{row.id}</span>
+          <span>{row.title}</span>
+          <span className={`mock-badge mock-badge-${row.tone}`}>{row.status}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function CoverageMockCard() {
+  return (
+    <div className="mock-card">
+      <div className="mock-card-title">Framework coverage</div>
+      {COVERAGE_MOCK_ROWS.map((row) => (
+        <div className="mock-coverage-row" key={row.name}>
+          <span className="mock-coverage-name">{row.name}</span>
+          <div className="mock-coverage-bar">
+            <div className="mock-coverage-fill" style={{ width: `${row.percent}%` }} />
+          </div>
+          <span className="mock-coverage-percent">{row.percent}%</span>
+        </div>
+      ))}
+    </div>
+  )
+}
 
 function DemoRequestForm() {
   const [form, setForm] = useState({ name: '', email: '', company: '', message: '' })
@@ -120,28 +145,43 @@ function DemoRequestForm() {
 
 export default function HomePage() {
   return (
-    <div className="marketing">
+    <div className="marketing marketing-warm">
       <header className="marketing-header">
-        <div className="marketing-logo">QMS/ISMS Console</div>
+        <div className="marketing-logo">QISMS</div>
         <nav className="marketing-nav">
-          <Link to="/app" className="marketing-nav-link">Log in</Link>
-          <Link to="/register" className="marketing-nav-btn-outline">Create account</Link>
-          <Link to="/register" className="btn-primary">Get started</Link>
+          <Link to="/trust" className="marketing-nav-link">Trust Center</Link>
+          <Link to="/app" className="marketing-nav-link">Sign in</Link>
+          <Link to="/register" className="pill-btn-dark">Get started</Link>
         </nav>
       </header>
 
-      <section className="hero">
-        <p className="hero-eyebrow">Compliance software for QMS &amp; ISMS teams</p>
-        <h1>Run your QMS and ISMS in one place</h1>
-        <p className="hero-subtitle">
-          Documents, risks, suppliers, audits, incidents, and corrective actions — with ISO 27001
-          and SOC 2 controls built in from day one.
-        </p>
-        <div className="hero-actions">
-          <Link to="/register" className="btn-primary hero-cta">Get started free</Link>
-          <Link to="/app" className="hero-cta-ghost">Log in</Link>
+      <section className="warm-hero">
+        <div className="warm-hero-copy">
+          <h1>Elevate your compliance program with one unified platform</h1>
+          <p className="warm-hero-subtitle">
+            Documents, risks, suppliers, audits, incidents, and corrective actions — with ISO 27001
+            and SOC 2 controls built in from day one.
+          </p>
+          <HeroEmailCapture />
+          <p className="warm-hero-frameworks">ISO/IEC 27001:2022 &nbsp;·&nbsp; SOC 2 &nbsp;·&nbsp; 21 CFR Part 11</p>
         </div>
-        <p className="hero-frameworks">ISO/IEC 27001:2022 &nbsp;·&nbsp; SOC 2 &nbsp;·&nbsp; 21 CFR Part 11</p>
+
+        <div className="warm-hero-art">
+          <div className="warm-blob warm-blob-a" />
+          <div className="warm-blob warm-blob-b" />
+          <CyclingPhoto
+            className="warm-hero-photo"
+            images={HERO_PHOTOS}
+            alt="A compliance team member reviewing controls"
+          />
+          <div className="warm-float-chip warm-float-chip-frameworks">
+            <span className="warm-float-dot" /> ISO 27001 ready
+          </div>
+          <div className="warm-float-card">
+            <div className="warm-float-card-label">Audit trail coverage</div>
+            <div className="warm-float-card-value">100%</div>
+          </div>
+        </div>
       </section>
 
       <section className="proof-strip">
@@ -153,30 +193,32 @@ export default function HomePage() {
         ))}
       </section>
 
-      <section className="feature-grid">
-        {FEATURES.map((f) => (
-          <div key={f.title} className="feature-card">
-            <h3>{f.title}</h3>
-            <p>{f.body}</p>
-          </div>
-        ))}
+      <section className="zigzag-section">
+        <div className="zigzag-copy">
+          <h2>Approvals your auditors will actually trust</h2>
+          <p>
+            Every document routes through role-based, multi-step approval — signed with a real
+            electronic signature under 21 CFR Part 11, not just a status flip. Editing an approved
+            document automatically sends it back for re-approval.
+          </p>
+          <Link to="/register" className="pill-btn-outline">Learn more →</Link>
+        </div>
+        <div className="zigzag-visual">
+          <DocumentMockCard />
+        </div>
       </section>
 
-      <section className="pricing">
-        <h2>Simple, transparent pricing</h2>
-        <div className="pricing-grid">
-          {PLANS.map((p) => (
-            <div key={p.key} className={`pricing-card${p.highlighted ? ' highlighted' : ''}`}>
-              {p.highlighted && <div className="pricing-ribbon">Most popular</div>}
-              <h3>{p.name}</h3>
-              <div className="pricing-price">{p.price}</div>
-              <p className="pricing-tagline">{p.tagline}</p>
-              <ul>
-                {p.features.map((f) => <li key={f}>{f}</li>)}
-              </ul>
-              <Link to={`/register?plan=${p.key}`} className="btn-primary pricing-cta">Get started</Link>
-            </div>
-          ))}
+      <section className="zigzag-section zigzag-reverse">
+        <div className="zigzag-copy">
+          <h2>See coverage across every framework, instantly</h2>
+          <p>
+            ISO 27001, SOC 2, HIPAA, GDPR, PCI DSS, NIST CSF — mapped control-to-control, so
+            implementing one framework shows you exactly how far it carries you toward the next.
+          </p>
+          <Link to="/register" className="pill-btn-outline">Learn more →</Link>
+        </div>
+        <div className="zigzag-visual">
+          <CoverageMockCard />
         </div>
       </section>
 
@@ -194,8 +236,29 @@ export default function HomePage() {
       </section>
 
       <footer className="marketing-footer">
-        <p>This is a demo/starter platform — pricing shown here is illustrative, not billed.</p>
-        <p><Link to="/trust">Trust Center</Link></p>
+        <div className="marketing-footer-columns">
+          <div className="marketing-footer-brand">
+            <div className="marketing-logo">QISMS</div>
+            <p>Document control, risk, and compliance management for ISO 27001 and SOC 2 teams.</p>
+          </div>
+
+          <div className="marketing-footer-col">
+            <h4>Product</h4>
+            <Link to="/register">Create account</Link>
+            <Link to="/app">Log in</Link>
+          </div>
+
+          <div className="marketing-footer-col">
+            <h4>Resources</h4>
+            <Link to="/trust">Trust Center</Link>
+            <Link to="/privacy">Privacy Policy</Link>
+            <Link to="/contact">Contact Us</Link>
+          </div>
+        </div>
+
+        <div className="marketing-footer-bottom">
+          <p>&copy; {new Date().getFullYear()} QISMS. This is a demo/starter platform.</p>
+        </div>
       </footer>
     </div>
   )

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { apiFetch, unwrapList } from './api'
 import StatusBadge from './StatusBadge'
 import ExportCsvButton from './ExportCsvButton'
+import { requestSignature } from './PromptDialog'
 
 const ROLE_OPTIONS = ['admin', 'auditor', 'user']
 
@@ -18,9 +19,13 @@ export default function WorkflowsPanel({ token }) {
       .catch((err) => setError(err.message))
     apiFetch('/documents/', token)
       .then((data) => {
+        // Full list, for resolving titles in the workflow cards below —
+        // but only a Draft can actually be submitted for review (see
+        // WorkflowViewSet.perform_create), so that's all the picker offers.
         const docs = unwrapList(data)
         setDocuments(docs)
-        if (docs.length && !documentId) setDocumentId(String(docs[0].id))
+        const draftDocs = docs.filter((d) => d.status === 'draft')
+        if (draftDocs.length && !documentId) setDocumentId(String(draftDocs[0].id))
       })
       .catch(() => setDocuments([]))
   }
@@ -48,18 +53,18 @@ export default function WorkflowsPanel({ token }) {
       .catch((err) => setError(err.message))
   }
 
-  const decide = (stepId, decision) => {
+  const decide = async (stepId, decision) => {
     // 21 CFR Part 11 §11.200: signing requires re-entering your password
     // at the moment of signing — being logged in isn't enough on its own.
-    // eslint-disable-next-line no-alert
-    const password = window.prompt(
-      `Enter your password to ${decision === 'approved' ? 'approve' : 'reject'} this step ` +
-      '(this is your electronic signature — it will be permanently recorded).',
-    )
-    if (!password) return
+    const result = await requestSignature({
+      title: decision === 'approved' ? 'Approve this step' : 'Reject this step',
+      danger: decision === 'rejected',
+      confirmLabel: decision === 'approved' ? 'Approve' : 'Reject',
+    })
+    if (!result) return
     apiFetch(`/workflow-steps/${stepId}/decide/`, token, {
       method: 'POST',
-      body: JSON.stringify({ decision, password }),
+      body: JSON.stringify({ decision, password: result.password }),
     })
       .then(() => {
         setError(null)
@@ -75,14 +80,23 @@ export default function WorkflowsPanel({ token }) {
       {error && <p className="error-text">{error}</p>}
 
       <form onSubmit={createWorkflow} className="panel" style={{ marginBottom: 20, padding: 14 }}>
-        <div style={{ marginBottom: 10 }}>
-          <span className="field-label">Document:</span>
-          <select value={documentId} onChange={(e) => setDocumentId(e.target.value)}>
-            {documents.map((d) => (
-              <option key={d.id} value={d.id}>{d.title} ({d.status})</option>
-            ))}
-          </select>
-        </div>
+        <p className="panel-hint">
+          Starting a workflow here is "submit for review" — it moves the document to In review
+          immediately and requires a real Draft; a rejected step sends it back to Draft for rework,
+          and every approval requires re-entering your password as an electronic signature.
+        </p>
+        {documents.filter((d) => d.status === 'draft').length === 0 ? (
+          <p className="empty-state">No Draft documents available to submit for review.</p>
+        ) : (
+          <div style={{ marginBottom: 10 }}>
+            <span className="field-label">Document:</span>
+            <select value={documentId} onChange={(e) => setDocumentId(e.target.value)}>
+              {documents.filter((d) => d.status === 'draft').map((d) => (
+                <option key={d.id} value={d.id}>{d.title}</option>
+              ))}
+            </select>
+          </div>
+        )}
         <div style={{ marginBottom: 10, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
           <span className="field-label">Approval steps (in order):</span>
           {steps.map((s, i) => (
@@ -95,7 +109,9 @@ export default function WorkflowsPanel({ token }) {
           ))}
           <button type="button" onClick={addStep}>+ Add Step</button>
         </div>
-        <button type="submit" className="btn-primary">Start Approval Workflow</button>
+        <button type="submit" className="btn-primary" disabled={documents.filter((d) => d.status === 'draft').length === 0}>
+          Submit for review
+        </button>
         <ExportCsvButton token={token} path="/workflows/" filename="workflows.csv" />
       </form>
 
@@ -127,12 +143,10 @@ export default function WorkflowsPanel({ token }) {
                     <td>{step.decided_by_username || '—'}</td>
                     <td>
                       {step.status === 'pending' && (
-                        <>
-                          <button onClick={() => decide(step.id, 'approved')} style={{ marginRight: 4 }}>
-                            Approve
-                          </button>
+                        <div className="cell-actions">
+                          <button onClick={() => decide(step.id, 'approved')}>Approve</button>
                           <button onClick={() => decide(step.id, 'rejected')}>Reject</button>
-                        </>
+                        </div>
                       )}
                     </td>
                   </tr>

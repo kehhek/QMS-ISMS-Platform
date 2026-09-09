@@ -46,9 +46,19 @@ export default function useCrudPanel(path, token, emptyForm) {
   }
 
   const saveEdit = (overrides) => {
+    // Every current call site wires this up as `onClick={() => saveEdit()}`,
+    // but `onClick={saveEdit}` (passing the function itself, not a call)
+    // is an easy, natural-looking mistake given `overrides` is optional —
+    // React then hands this a SyntheticEvent as `overrides`, and
+    // spreading that into the PATCH body used to crash with
+    // "JSON.stringify cannot serialize cyclic structures" (an event
+    // object contains circular internal references). Guard against that
+    // exact shape rather than trusting every caller to remember the
+    // arrow-wrap.
+    const safeOverrides = overrides && typeof overrides === 'object' && !overrides.nativeEvent ? overrides : undefined
     apiFetch(`${path}${editingId}/`, token, {
       method: 'PATCH',
-      body: JSON.stringify(overrides ? { ...editForm, ...overrides } : editForm),
+      body: JSON.stringify(safeOverrides ? { ...editForm, ...safeOverrides } : editForm),
     })
       .then(() => {
         setEditingId(null)

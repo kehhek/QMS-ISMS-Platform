@@ -89,8 +89,10 @@ export default function IncidentsPanel({ token }) {
                   </td>
                   <td>{i.reported_by_username || '—'}</td>
                   <td>
-                    <button onClick={saveEdit} style={{ marginRight: 4 }}>Save</button>
-                    <button onClick={cancelEdit}>Cancel</button>
+                    <div className="cell-actions">
+                      <button onClick={() => saveEdit()}>Save</button>
+                      <button onClick={cancelEdit}>Cancel</button>
+                    </div>
                   </td>
                 </tr>
               ) : (
@@ -101,8 +103,10 @@ export default function IncidentsPanel({ token }) {
                   <td>{risks.find((r) => r.id === i.related_risk)?.name || '—'}</td>
                   <td>{i.reported_by_username || '—'}</td>
                   <td>
-                    <button onClick={() => startEdit(i)} style={{ marginRight: 4 }}>Edit</button>
-                    <button onClick={() => remove(i, `"${i.title}"`)}>Delete</button>
+                    <div className="cell-actions">
+                      <button onClick={() => startEdit(i)}>Edit</button>
+                      <button onClick={() => remove(i, `"${i.title}"`)}>Delete</button>
+                    </div>
                   </td>
                 </tr>
               )

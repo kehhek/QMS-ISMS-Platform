@@ -16,7 +16,13 @@ const UPCOMING_CAP = 5
 const DOCUMENT_STAGES = ['draft', 'in_review', 'approved', 'archived']
 const RISK_STAGES = ['open', 'mitigating', 'closed']
 const AUDIT_STAGES = ['planned', 'in_progress', 'completed', 'cancelled']
-const CAPA_STAGES = ['open', 'in_progress', 'verified', 'closed']
+// Must match CorrectiveAction.Status in core/models.py exactly — these
+// used to be a made-up ['open', 'in_progress', 'verified', 'closed'] that
+// didn't match any real status, so the dropdown showed "Investigation" /
+// "Action planned" / "Action implemented" / "Verification" while the
+// dashboard chart silently dropped those CAPAs out of the total instead
+// of counting them anywhere.
+const CAPA_STAGES = ['open', 'investigation', 'action_planned', 'action_implemented', 'verification', 'closed']
 const CONTROL_STAGES = ['not_implemented', 'partial', 'implemented', 'not_applicable']
 const SEVERITY_STAGES = ['low', 'medium', 'high', 'critical']
 
@@ -70,13 +76,18 @@ export default function DashboardPanel({ token }) {
   const soc2Implemented = summary.controls.soc2?.implemented || 0
 
   const openRisks = (summary.risks.open || 0) + (summary.risks.mitigating || 0)
-  const openCapas = (summary.corrective_actions.open || 0) + (summary.corrective_actions.in_progress || 0)
+  // "Open" here means "not yet closed" — every non-closed stage of the
+  // real workflow, not just the literal 'open' status.
+  const openCapas = Object.entries(summary.corrective_actions || {}).reduce(
+    (total, [stage, count]) => (stage === 'closed' ? total : total + (count || 0)),
+    0,
+  )
   const openIncidents = summary.totals.incidents - (summary.incidents.resolved || 0) - (summary.incidents.closed || 0)
 
   const documentStagesLegend = toSegments(summary.documents, DOCUMENT_STAGES, ordinalSteps(4))
   const riskStagesLegend = toSegments(summary.risks, RISK_STAGES, ordinalSteps(3))
   const auditStagesLegend = toSegments(summary.audits, AUDIT_STAGES, ordinalSteps(4))
-  const capaStagesLegend = toSegments(summary.corrective_actions, CAPA_STAGES, ordinalSteps(4))
+  const capaStagesLegend = toSegments(summary.corrective_actions, CAPA_STAGES, ordinalSteps(CAPA_STAGES.length))
   const severityLegend = toSegments(summary.incidents, SEVERITY_STAGES, SEVERITY_COLORS)
   const isoStagesLegend = toSegments(summary.controls.iso27001, CONTROL_STAGES, ordinalSteps(4))
   const soc2StagesLegend = toSegments(summary.controls.soc2, CONTROL_STAGES, ordinalSteps(4))

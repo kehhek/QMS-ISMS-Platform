@@ -318,7 +318,7 @@ function TeamCompletion({ video, token }) {
   )
 }
 
-function TrainingVideosSection({ token }) {
+function TrainingVideosSection({ token, isAdmin }) {
   const [videos, setVideos] = useState([])
   const [error, setError] = useState(null)
   const [form, setForm] = useState({ title: '', description: '', period: '' })
@@ -388,45 +388,51 @@ function TrainingVideosSection({ token }) {
       <h3 style={{ marginBottom: 8 }}>Training Videos</h3>
       {error && <p className="error-text">{error}</p>}
       <p className="panel-hint">
-        Upload this month's awareness video and click "Push to everyone" to assign it to every
-        active member — each shows up on their own list to watch, with Pending/In progress/
-        Completed tracked per person below. Add quiz questions ("Manage quiz") to require actually
-        passing a quick check before a video counts as watched — failing resets it back to
-        Pending. "Team completion" shows each User Group's progress, a 🏆 100% trained badge once
-        everyone's done, and each person's current streak of completed videos.
+        {isAdmin
+          ? ('Upload this month\'s awareness video and click "Push to everyone" to assign it to '
+              + 'every active member — each shows up on their own list to watch, with Pending/In '
+              + 'progress/Completed tracked per person below. Add quiz questions ("Manage quiz") to '
+              + 'require actually passing a quick check before a video counts as watched — failing '
+              + 'resets it back to Pending. "Team completion" shows each User Group\'s progress, a '
+              + '🏆 100% trained badge once everyone\'s done, and each person\'s current streak of '
+              + 'completed videos.')
+          : 'Training assigned to you. Watch each video below and mark it complete (or pass its quiz) by its due date.'}
       </p>
 
-      {/* Shown to every member, same as every other admin-gated form in
-          this console (e.g. Assets' edit, Documents' status changes) —
-          the backend (TrainingVideoViewSet) is the actual enforcement
-          point and returns a clear, readable error if a non-admin/
-          auditor submits this. */}
-      <form onSubmit={upload} className="toolbar" style={{ flexWrap: 'wrap', marginBottom: 16 }}>
-        <input
-          placeholder="Title (e.g. September 2026 Security Awareness)"
-          value={form.title}
-          onChange={(e) => setForm({ ...form, title: e.target.value })}
-          style={{ width: 280 }}
-          required
-        />
-        <input
-          placeholder="Period (e.g. September 2026)"
-          value={form.period}
-          onChange={(e) => setForm({ ...form, period: e.target.value })}
-          style={{ width: 160 }}
-        />
-        <input
-          placeholder="Description (optional)"
-          value={form.description}
-          onChange={(e) => setForm({ ...form, description: e.target.value })}
-          style={{ width: 220 }}
-        />
-        <input type="file" accept="video/*" onChange={(e) => setFile(e.target.files[0])} />
-        <button type="submit" className="btn-primary">Upload video</button>
-      </form>
+      {/* Only an admin can upload/push/manage — enforced for real by the
+          backend (TrainingVideoViewSet), but hidden here too rather than
+          shown-and-rejected, since a plain user/auditor has nothing to
+          do with this form. */}
+      {isAdmin && (
+        <form onSubmit={upload} className="toolbar" style={{ flexWrap: 'wrap', marginBottom: 16 }}>
+          <input
+            placeholder="Title (e.g. September 2026 Security Awareness)"
+            value={form.title}
+            onChange={(e) => setForm({ ...form, title: e.target.value })}
+            style={{ width: 280 }}
+            required
+          />
+          <input
+            placeholder="Period (e.g. September 2026)"
+            value={form.period}
+            onChange={(e) => setForm({ ...form, period: e.target.value })}
+            style={{ width: 160 }}
+          />
+          <input
+            placeholder="Description (optional)"
+            value={form.description}
+            onChange={(e) => setForm({ ...form, description: e.target.value })}
+            style={{ width: 220 }}
+          />
+          <input type="file" accept="video/*" onChange={(e) => setFile(e.target.files[0])} />
+          <button type="submit" className="btn-primary">Upload video</button>
+        </form>
+      )}
 
       {videos.length === 0 ? (
-        <p className="empty-state">No training videos yet.</p>
+        <p className="empty-state">
+          {isAdmin ? 'No training videos yet.' : 'No training assigned to you yet.'}
+        </p>
       ) : (
         <div style={{ display: 'grid', gap: 12 }}>
           {videos.map((v) => (
@@ -442,16 +448,20 @@ function TrainingVideosSection({ token }) {
                   <button onClick={() => setPlayingId(playingId === v.id ? null : v.id)}>
                     {playingId === v.id ? 'Hide' : 'Watch'}
                   </button>
-                  <button onClick={() => publish(v)}>Push to everyone</button>
-                  <button onClick={() => loadViewers(v)}>
-                    {viewersId === v.id ? 'Hide viewers' : 'View viewers'}
-                  </button>
-                  <button onClick={() => setQuizManagerId(quizManagerId === v.id ? null : v.id)}>
-                    {quizManagerId === v.id ? 'Hide quiz' : `Manage quiz (${v.quiz_question_count})`}
-                  </button>
-                  <button onClick={() => setTeamCompletionId(teamCompletionId === v.id ? null : v.id)}>
-                    {teamCompletionId === v.id ? 'Hide teams' : 'Team completion'}
-                  </button>
+                  {isAdmin && (
+                    <>
+                      <button onClick={() => publish(v)}>Push to everyone</button>
+                      <button onClick={() => loadViewers(v)}>
+                        {viewersId === v.id ? 'Hide viewers' : 'View viewers'}
+                      </button>
+                      <button onClick={() => setQuizManagerId(quizManagerId === v.id ? null : v.id)}>
+                        {quizManagerId === v.id ? 'Hide quiz' : `Manage quiz (${v.quiz_question_count})`}
+                      </button>
+                      <button onClick={() => setTeamCompletionId(teamCompletionId === v.id ? null : v.id)}>
+                        {teamCompletionId === v.id ? 'Hide teams' : 'Team completion'}
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -476,7 +486,7 @@ function TrainingVideosSection({ token }) {
                 </div>
               )}
 
-              {viewersId === v.id && (
+              {isAdmin && viewersId === v.id && (
                 <div style={{ marginTop: 12, overflowX: 'auto' }}>
                   {viewers === null ? (
                     <p className="empty-state">Loading…</p>
@@ -505,8 +515,8 @@ function TrainingVideosSection({ token }) {
                 </div>
               )}
 
-              {quizManagerId === v.id && <QuizManager video={v} token={token} />}
-              {teamCompletionId === v.id && <TeamCompletion video={v} token={token} />}
+              {isAdmin && quizManagerId === v.id && <QuizManager video={v} token={token} />}
+              {isAdmin && teamCompletionId === v.id && <TeamCompletion video={v} token={token} />}
             </div>
           ))}
         </div>
@@ -515,7 +525,7 @@ function TrainingVideosSection({ token }) {
   )
 }
 
-export default function SecurityAwarenessPanel({ token }) {
+export default function SecurityAwarenessPanel({ token, isAdmin }) {
   const [records, setRecords] = useState([])
   const [members, setMembers] = useState([])
   const [error, setError] = useState(null)
@@ -566,39 +576,43 @@ export default function SecurityAwarenessPanel({ token }) {
     <div>
       {error && <p className="error-text">{error}</p>}
 
-      <TrainingVideosSection token={token} />
+      <TrainingVideosSection token={token} isAdmin={isAdmin} />
 
       <h3 style={{ marginBottom: 8 }}>Training Assignments</h3>
       <p className="panel-hint">
-        Security awareness training tracking (ISO 27001 A.6.3). Admins/auditors assign training;
-        anyone can mark their own assignment complete. Rows created by "Push to everyone" above
-        show their video's title here too.
+        {isAdmin
+          ? ('Security awareness training tracking (ISO 27001 A.6.3). Admins assign training; '
+              + 'anyone can mark their own assignment complete. Rows created by "Push to everyone" '
+              + 'above show their video\'s title here too.')
+          : 'Your security awareness training assignments (ISO 27001 A.6.3) — mark each complete by its due date.'}
       </p>
 
-      <form onSubmit={assign} className="toolbar">
-        <select value={form.user} onChange={(e) => setForm({ ...form, user: e.target.value })}>
-          {members.map((m) => (
-            <option key={m.id} value={m.user}>{m.username}</option>
-          ))}
-        </select>
-        <input
-          placeholder="Training title (e.g. Annual security awareness 2026)"
-          value={form.title}
-          onChange={(e) => setForm({ ...form, title: e.target.value })}
-          style={{ width: 280 }}
-          required
-        />
-        <input
-          type="date"
-          value={form.due_date}
-          onChange={(e) => setForm({ ...form, due_date: e.target.value })}
-        />
-        <button type="submit" className="btn-primary">Assign Training</button>
-        <ExportCsvButton token={token} path="/training-records/" filename="training-records.csv" />
-      </form>
+      {isAdmin && (
+        <form onSubmit={assign} className="toolbar">
+          <select value={form.user} onChange={(e) => setForm({ ...form, user: e.target.value })}>
+            {members.map((m) => (
+              <option key={m.id} value={m.user}>{m.username}</option>
+            ))}
+          </select>
+          <input
+            placeholder="Training title (e.g. Annual security awareness 2026)"
+            value={form.title}
+            onChange={(e) => setForm({ ...form, title: e.target.value })}
+            style={{ width: 280 }}
+            required
+          />
+          <input
+            type="date"
+            value={form.due_date}
+            onChange={(e) => setForm({ ...form, due_date: e.target.value })}
+          />
+          <button type="submit" className="btn-primary">Assign Training</button>
+          <ExportCsvButton token={token} path="/training-records/" filename="training-records.csv" />
+        </form>
+      )}
 
       {records.length === 0 ? (
-        <p className="empty-state">No training records yet.</p>
+        <p className="empty-state">{isAdmin ? 'No training records yet.' : 'No training assigned to you yet.'}</p>
       ) : (
         <table>
           <thead>

@@ -102,21 +102,22 @@ export default function AccessRegisterPanel({ token }) {
                   )}
                 </td>
                 <td>
-                  <select
-                    value={draftFor(m.id).outcome}
-                    onChange={(e) => setDraft(m.id, { outcome: e.target.value })}
-                    style={{ marginRight: 4 }}
-                  >
-                    <option value="confirmed">Confirm access</option>
-                    <option value="suspended">Suspend account</option>
-                  </select>
-                  <input
-                    placeholder="Notes"
-                    value={draftFor(m.id).notes}
-                    onChange={(e) => setDraft(m.id, { notes: e.target.value })}
-                    style={{ width: 100, marginRight: 4 }}
-                  />
-                  <button onClick={() => submitReview(m)}>Record</button>
+                  <div className="cell-actions">
+                    <select
+                      value={draftFor(m.id).outcome}
+                      onChange={(e) => setDraft(m.id, { outcome: e.target.value })}
+                    >
+                      <option value="confirmed">Confirm access</option>
+                      <option value="suspended">Suspend account</option>
+                    </select>
+                    <input
+                      placeholder="Notes"
+                      value={draftFor(m.id).notes}
+                      onChange={(e) => setDraft(m.id, { notes: e.target.value })}
+                      style={{ width: 100 }}
+                    />
+                    <button onClick={() => submitReview(m)}>Record</button>
+                  </div>
                 </td>
               </tr>
             ))}

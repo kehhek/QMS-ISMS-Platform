@@ -5,10 +5,13 @@ export default function LoginForm({ onLogin }) {
   const [password, setPassword] = useState('')
   const [error, setError] = useState(null)
   const [submitting, setSubmitting] = useState(false)
-  // Set once a login attempt comes back with password_expired: true —
-  // switches the form into "set a new password" mode using the same
-  // username+old password already entered.
-  const [expired, setExpired] = useState(false)
+  // Set once a login attempt comes back with password_expired: true or
+  // must_change_password: true — switches the form into "set a new
+  // password" mode using the same username+old password already
+  // entered. Both reasons land on the same screen and the same
+  // change-expired endpoint (it doesn't care which sent someone there),
+  // just with different wording for why they're here.
+  const [changeRequired, setChangeRequired] = useState(null) // null | 'expired' | 'must_change'
   const [newPassword, setNewPassword] = useState('')
   // "Forgot password?" — a separate sub-view, entered explicitly rather
   // than triggered by any login response.
@@ -27,9 +30,9 @@ export default function LoginForm({ onLogin }) {
       .then(async (r) => {
         const data = await r.json().catch(() => null)
         if (!r.ok) {
-          if (data && data.password_expired) {
-            setExpired(true)
-            throw new Error(data.detail || 'Your password has expired.')
+          if (data && (data.password_expired || data.must_change_password)) {
+            setChangeRequired(data.must_change_password ? 'must_change' : 'expired')
+            throw new Error(data.detail || 'Your password must be changed.')
           }
           const message = (data && (data.non_field_errors?.[0] || data.detail)) || 'Login failed'
           throw new Error(message)
@@ -79,7 +82,7 @@ export default function LoginForm({ onLogin }) {
 
   if (showForgot) {
     return (
-      <form onSubmit={submitForgot}>
+      <form onSubmit={submitForgot} className="auth-form">
         <h2>Reset your password</h2>
         {forgotSent ? (
           <p className="success-text">
@@ -88,22 +91,23 @@ export default function LoginForm({ onLogin }) {
         ) : (
           <>
             <p className="panel-hint">Enter your username and we'll email you a reset link.</p>
-            <input
-              placeholder="Username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              autoFocus
-              required
-            />
-            <button type="submit" disabled={submitting}>{submitting ? 'Sending…' : 'Send Reset Link'}</button>
+            <div className="modal-field">
+              <label className="modal-field-label" htmlFor="login-forgot-username">Username</label>
+              <input
+                id="login-forgot-username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                autoFocus
+                required
+              />
+            </div>
+            <button type="submit" className="btn-primary" disabled={submitting}>
+              {submitting ? 'Sending…' : 'Send reset link'}
+            </button>
           </>
         )}
-        <p style={{ marginTop: 14, fontSize: 12 }}>
-          <button
-            type="button"
-            onClick={() => { setShowForgot(false); setForgotSent(false) }}
-            style={{ background: 'none', border: 'none', padding: 0, color: 'var(--color-primary)', cursor: 'pointer' }}
-          >
+        <p className="auth-form-footer-link">
+          <button type="button" className="link-button" onClick={() => { setShowForgot(false); setForgotSent(false) }}>
             Back to log in
           </button>
         </p>
@@ -111,53 +115,66 @@ export default function LoginForm({ onLogin }) {
     )
   }
 
-  if (expired) {
+  if (changeRequired) {
     return (
-      <form onSubmit={submitNewPassword}>
-        <h2>Password expired</h2>
+      <form onSubmit={submitNewPassword} className="auth-form">
+        <h2>{changeRequired === 'must_change' ? 'Choose your own password' : 'Password expired'}</h2>
         {error && <p className="error-text">{error}</p>}
-        <p className="panel-hint">Choose a new password to continue.</p>
-        <input
-          type="password"
-          placeholder="New password"
-          value={newPassword}
-          onChange={(e) => setNewPassword(e.target.value)}
-          autoFocus
-          required
-          minLength={10}
-        />
-        <button type="submit" disabled={submitting}>
-          {submitting ? 'Changing…' : 'Set New Password & Log In'}
+        <p className="panel-hint">
+          {changeRequired === 'must_change'
+            ? "An administrator set a temporary password for you — choose your own to continue. You won't see this screen again after this."
+            : 'Choose a new password to continue.'}
+        </p>
+        <div className="modal-field">
+          <label className="modal-field-label" htmlFor="login-new-password">New password</label>
+          <input
+            id="login-new-password"
+            type="password"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+            autoFocus
+            required
+            minLength={10}
+          />
+        </div>
+        <button type="submit" className="btn-primary" disabled={submitting}>
+          {submitting ? 'Changing…' : 'Set new password & log in'}
         </button>
       </form>
     )
   }
 
   return (
-    <form onSubmit={submit}>
-      <h2>QMS/ISMS Console</h2>
+    <form onSubmit={submit} className="auth-form">
+      <h2>Log in</h2>
+      <p className="panel-hint">Welcome back — enter your credentials to continue.</p>
       {error && <p className="error-text">{error}</p>}
-      <input
-        placeholder="Username"
-        value={username}
-        onChange={(e) => setUsername(e.target.value)}
-        autoFocus
-        required
-      />
-      <input
-        placeholder="Password"
-        type="password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        required
-      />
-      <button type="submit" disabled={submitting}>{submitting ? 'Logging in…' : 'Log in'}</button>
-      <p style={{ marginTop: 14, fontSize: 12 }}>
-        <button
-          type="button"
-          onClick={() => setShowForgot(true)}
-          style={{ background: 'none', border: 'none', padding: 0, color: 'var(--color-primary)', cursor: 'pointer' }}
-        >
+      <div className="modal-field">
+        <label className="modal-field-label" htmlFor="login-username">Username</label>
+        <input
+          id="login-username"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          autoFocus
+          required
+        />
+      </div>
+      <div className="modal-field">
+        <label className="modal-field-label" htmlFor="login-password">Password</label>
+        <input
+          id="login-password"
+          type="password"
+          autoComplete="current-password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+        />
+      </div>
+      <button type="submit" className="btn-primary" disabled={submitting}>
+        {submitting ? 'Logging in…' : 'Log in'}
+      </button>
+      <p className="auth-form-footer-link">
+        <button type="button" className="link-button" onClick={() => setShowForgot(true)}>
           Forgot password?
         </button>
       </p>

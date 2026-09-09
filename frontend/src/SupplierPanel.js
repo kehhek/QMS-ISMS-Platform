@@ -141,31 +141,28 @@ function QuestionnairesSection({ supplierId, token }) {
                   <td>{q.sent_at ? new Date(q.sent_at).toLocaleString() : '—'}</td>
                   <td>{q.responded_at ? new Date(q.responded_at).toLocaleString() : '—'}</td>
                   <td>
-                    {q.status === 'draft' && (
-                      <button onClick={() => startEditQuestions(q)} style={{ marginRight: 4 }}>
-                        Edit questions
+                    <div className="cell-actions">
+                      {q.status === 'draft' && (
+                        <button onClick={() => startEditQuestions(q)}>Edit questions</button>
+                      )}
+                      <button onClick={() => send(q)}>
+                        {q.status === 'draft' ? 'Send' : 'Resend'}
                       </button>
-                    )}
-                    <button onClick={() => send(q)} style={{ marginRight: 4 }}>
-                      {q.status === 'draft' ? 'Send' : 'Resend'}
-                    </button>
-                    {(q.status === 'responded' || q.status === 'reviewed') && (
-                      <button
-                        onClick={() => setExpandedResponses(expandedResponses === q.id ? null : q.id)}
-                        style={{ marginRight: 4 }}
-                      >
-                        {expandedResponses === q.id ? 'Hide responses' : 'View responses'}
-                      </button>
-                    )}
-                    {q.status === 'responded' && (
-                      <button onClick={() => review(q)} style={{ marginRight: 4 }}>Mark reviewed</button>
-                    )}
-                    {(q.status === 'responded' || q.status === 'reviewed') && (
-                      <>
-                        <button onClick={() => decide(q, 'approve')} style={{ marginRight: 4 }}>Approve</button>
-                        <button onClick={() => decide(q, 'reject')}>Reject</button>
-                      </>
-                    )}
+                      {(q.status === 'responded' || q.status === 'reviewed') && (
+                        <button onClick={() => setExpandedResponses(expandedResponses === q.id ? null : q.id)}>
+                          {expandedResponses === q.id ? 'Hide responses' : 'View responses'}
+                        </button>
+                      )}
+                      {q.status === 'responded' && (
+                        <button onClick={() => review(q)}>Mark reviewed</button>
+                      )}
+                      {(q.status === 'responded' || q.status === 'reviewed') && (
+                        <>
+                          <button onClick={() => decide(q, 'approve')}>Approve</button>
+                          <button onClick={() => decide(q, 'reject')}>Reject</button>
+                        </>
+                      )}
+                    </div>
                   </td>
                 </tr>
                 {q.decided_at && (
@@ -184,8 +181,8 @@ function QuestionnairesSection({ supplierId, token }) {
                         onChange={(e) => setEditText(e.target.value)}
                         style={{ width: '100%', minHeight: 90, fontFamily: 'inherit', marginTop: 8 }}
                       />
-                      <div style={{ marginTop: 6 }}>
-                        <button onClick={() => saveQuestions(q)} style={{ marginRight: 4 }}>Save</button>
+                      <div className="cell-actions" style={{ marginTop: 6 }}>
+                        <button onClick={() => saveQuestions(q)}>Save</button>
                         <button onClick={() => setEditingId(null)}>Cancel</button>
                       </div>
                     </td>
@@ -471,8 +468,10 @@ export default function SupplierPanel({ token }) {
                     </td>
                     <td>—</td>
                     <td>
-                      <button onClick={saveEdit} style={{ marginRight: 4 }}>Save</button>
-                      <button onClick={cancelEdit}>Cancel</button>
+                      <div className="cell-actions">
+                        <button onClick={saveEdit}>Save</button>
+                        <button onClick={cancelEdit}>Cancel</button>
+                      </div>
                     </td>
                   </tr>
                 ) : (
@@ -488,8 +487,10 @@ export default function SupplierPanel({ token }) {
                       </button>
                     </td>
                     <td>
-                      <button onClick={() => startEdit(s)} style={{ marginRight: 4 }}>Edit</button>
-                      <button onClick={() => deleteSupplier(s)}>Delete</button>
+                      <div className="cell-actions">
+                        <button onClick={() => startEdit(s)}>Edit</button>
+                        <button onClick={() => deleteSupplier(s)}>Delete</button>
+                      </div>
                     </td>
                   </tr>
                 )}
