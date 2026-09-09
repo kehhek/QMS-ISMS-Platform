@@ -8,8 +8,10 @@ const SEVERITY_OPTIONS = ['low', 'medium', 'high', 'critical']
 const STATUS_OPTIONS = ['open', 'investigating', 'contained', 'resolved', 'closed']
 const EMPTY_FORM = { title: '', description: '', severity: 'medium', related_risk: '' }
 
-export default function IncidentsPanel({ token }) {
+export default function IncidentsPanel({ token, initialFilter, onConsumeFilter }) {
   const [risks, setRisks] = useState([])
+  // Seeded from a Dashboard "Incidents by severity" drill-down click.
+  const [severityFilter, setSeverityFilter] = useState((initialFilter && initialFilter.severity) || '')
   const {
     items: incidents, error, form, setForm, create,
     editingId, editForm, setEditForm, startEdit, cancelEdit, saveEdit, remove,
@@ -20,6 +22,12 @@ export default function IncidentsPanel({ token }) {
     apiFetch('/risks/', token).then((data) => setRisks(unwrapList(data))).catch(() => setRisks([]))
   }, [token])
 
+  useEffect(() => {
+    if (initialFilter && onConsumeFilter) onConsumeFilter()
+    // Once on mount only — see severityFilter's own initializer above.
+    // eslint-disable-next-line
+  }, [])
+
   const submitCreate = (e) => {
     e.preventDefault()
     create({ ...form, related_risk: form.related_risk || null })
@@ -27,9 +35,19 @@ export default function IncidentsPanel({ token }) {
 
   if (!token) return <p className="empty-state">Set a token above to view incidents.</p>
 
+  const visibleIncidents = severityFilter ? incidents.filter((i) => i.severity === severityFilter) : incidents
+
   return (
     <div>
       {error && <p className="error-text">{error}</p>}
+      {severityFilter && (
+        <p className="panel-hint">
+          Showing only <strong>{severityFilter}</strong> severity incidents —{' '}
+          <button type="button" onClick={() => setSeverityFilter('')} style={{ padding: '2px 8px' }}>
+            clear filter
+          </button>
+        </p>
+      )}
       <form onSubmit={submitCreate} className="toolbar">
         <input
           placeholder="Title"
@@ -47,8 +65,8 @@ export default function IncidentsPanel({ token }) {
         <button type="submit" className="btn-primary">Report Incident</button>
         <ExportCsvButton token={token} path="/incidents/" filename="incidents.csv" />
       </form>
-      {incidents.length === 0 ? (
-        <p className="empty-state">No incidents reported.</p>
+      {visibleIncidents.length === 0 ? (
+        <p className="empty-state">{severityFilter ? 'No incidents match this filter.' : 'No incidents reported.'}</p>
       ) : (
         <table>
           <thead>
@@ -62,7 +80,7 @@ export default function IncidentsPanel({ token }) {
             </tr>
           </thead>
           <tbody>
-            {incidents.map((i) => (
+            {visibleIncidents.map((i) => (
               editingId === i.id ? (
                 <tr key={i.id}>
                   <td>

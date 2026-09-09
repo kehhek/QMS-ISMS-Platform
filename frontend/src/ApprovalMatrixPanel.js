@@ -105,6 +105,12 @@ function ApprovalRecords({ token }) {
   const [form, setForm] = useState({
     entity_type: GATEABLE_ENTITIES[0].value, object_id: '', document_number: '', review_date: '', password: '',
   })
+  // Open (not-yet-closed) CAPAs, fetched only when the entity picker is
+  // set to corrective_action — lets the "Record ID" field become a
+  // by-title dropdown instead of a raw number nobody looking at the
+  // CAPA screen actually knows, which is exactly what made this gate
+  // confusing to satisfy in practice.
+  const [openCapas, setOpenCapas] = useState(null)
 
   const load = () => {
     apiFetch('/approval-records/', token)
@@ -113,6 +119,14 @@ function ApprovalRecords({ token }) {
   }
 
   useEffect(() => { if (token) load() }, [token]) // eslint-disable-line
+
+  useEffect(() => {
+    if (!token || form.entity_type !== 'corrective_action') return
+    apiFetch('/corrective-actions/', token)
+      .then((data) => setOpenCapas(unwrapList(data).filter((c) => c.status !== 'closed')))
+      .catch(() => setOpenCapas(null))
+    // eslint-disable-next-line
+  }, [token, form.entity_type])
 
   const submit = (e) => {
     e.preventDefault()
@@ -137,17 +151,36 @@ function ApprovalRecords({ token }) {
         the same re-verify-at-signing pattern every other electronic signature in this app uses.
       </p>
       <form onSubmit={submit} className="toolbar">
-        <select value={form.entity_type} onChange={(e) => setForm({ ...form, entity_type: e.target.value })}>
+        <select
+          value={form.entity_type}
+          onChange={(e) => setForm({ ...form, entity_type: e.target.value, object_id: '' })}
+        >
           {GATEABLE_ENTITIES.map((e) => <option key={e.value} value={e.value}>{e.label}</option>)}
         </select>
-        <input
-          placeholder="Record ID"
-          type="number"
-          value={form.object_id}
-          onChange={(e) => setForm({ ...form, object_id: e.target.value })}
-          style={{ width: 90 }}
-          required
-        />
+        {form.entity_type === 'corrective_action' ? (
+          <select
+            value={form.object_id}
+            onChange={(e) => setForm({ ...form, object_id: e.target.value })}
+            style={{ minWidth: 220 }}
+            required
+          >
+            <option value="">
+              {openCapas === null ? 'Loading open CAPAs…' : 'Choose a CAPA…'}
+            </option>
+            {(openCapas || []).map((c) => (
+              <option key={c.id} value={c.id}>#{c.id} — {c.title}</option>
+            ))}
+          </select>
+        ) : (
+          <input
+            placeholder="Record ID"
+            type="number"
+            value={form.object_id}
+            onChange={(e) => setForm({ ...form, object_id: e.target.value })}
+            style={{ width: 90 }}
+            required
+          />
+        )}
         <input
           placeholder="Doc number (optional)"
           value={form.document_number}

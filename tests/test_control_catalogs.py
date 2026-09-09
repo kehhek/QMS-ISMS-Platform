@@ -188,3 +188,37 @@ class SeedControlCatalogsCommandTests(TestCase):
         with schema_context(tenant.schema_name):
             from core.models import Control
             self.assertEqual(Control.objects.count(), 126)
+
+
+class ControlStatusFilterApiTests(TestCase):
+    """?status= on /api/controls/ — the dashboard's per-framework
+    "controls by status" chart drills into exactly this, alongside the
+    existing ?framework= filter."""
+
+    def setUp(self):
+        self.tenant = make_tenant('controlstatusfiltertest')
+        self.host = f'{self.tenant.schema_name}.localhost'
+        self.admin = make_member(self.tenant, 'csf_admin', Membership.Role.ADMIN)
+        with schema_context(self.tenant.schema_name):
+            from core.models import Control
+            Control.objects.create(framework='iso27001', identifier='A.5.1', name='Policy', status='implemented')
+            Control.objects.create(framework='iso27001', identifier='A.5.2', name='Roles', status='not_implemented')
+            Control.objects.create(framework='soc2', identifier='CC6.1', name='Access', status='implemented')
+
+        self.api = APIClient()
+        self.api.force_authenticate(user=self.admin)
+
+    def test_status_filter_alone(self):
+        resp = self.api.get('/api/controls/?status=implemented', HTTP_HOST=self.host)
+        self.assertEqual(resp.data['count'], 2)
+        self.assertTrue(all(c['status'] == 'implemented' for c in resp.data['results']))
+
+    def test_status_and_framework_combine(self):
+        resp = self.api.get('/api/controls/?framework=iso27001&status=implemented', HTTP_HOST=self.host)
+        self.assertEqual(resp.data['count'], 1)
+        self.assertEqual(resp.data['results'][0]['identifier'], 'A.5.1')
+
+    def test_unknown_status_returns_empty_not_an_error(self):
+        resp = self.api.get('/api/controls/?status=not_a_real_status', HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['count'], 0)

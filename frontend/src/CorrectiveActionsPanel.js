@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { apiFetch } from './api'
 import useCrudPanel from './useCrudPanel'
 import StatusBadge from './StatusBadge'
@@ -13,11 +13,19 @@ const TYPE_OPTIONS = ['corrective', 'preventive']
 const EDITABLE_STATUS_OPTIONS = ['open', 'investigation', 'action_planned', 'action_implemented', 'verification']
 const EMPTY_FORM = { title: '', description: '', action_type: 'corrective' }
 
-export default function CorrectiveActionsPanel({ token }) {
+export default function CorrectiveActionsPanel({ token, initialFilter, onConsumeFilter }) {
+  // Seeded from a Dashboard "Corrective actions by status" drill-down click.
+  const [statusFilter, setStatusFilter] = useState((initialFilter && initialFilter.status) || '')
   const {
     items: actions, error, setError, form, setForm, create, load,
     editingId, editForm, setEditForm, startEdit, cancelEdit, saveEdit, remove,
   } = useCrudPanel('/corrective-actions/', token, EMPTY_FORM)
+
+  useEffect(() => {
+    if (initialFilter && onConsumeFilter) onConsumeFilter()
+    // Once on mount only — see statusFilter's own initializer above.
+    // eslint-disable-next-line
+  }, [])
 
   const closeCapa = async (capa) => {
     const result = await requestSignature({
@@ -37,6 +45,8 @@ export default function CorrectiveActionsPanel({ token }) {
 
   if (!token) return <p className="empty-state">Set a token above to view corrective actions.</p>
 
+  const visibleActions = statusFilter ? actions.filter((a) => a.status === statusFilter) : actions
+
   return (
     <div>
       {error && <p className="error-text">{error}</p>}
@@ -45,6 +55,14 @@ export default function CorrectiveActionsPanel({ token }) {
         Closing requires re-entering your password and an effectiveness verification note — the
         same electronic-signature pattern as document approval.
       </p>
+      {statusFilter && (
+        <p className="panel-hint">
+          Showing only <strong>{statusFilter.replace(/_/g, ' ')}</strong> corrective actions —{' '}
+          <button type="button" onClick={() => setStatusFilter('')} style={{ padding: '2px 8px' }}>
+            clear filter
+          </button>
+        </p>
+      )}
       <form onSubmit={(e) => { e.preventDefault(); create() }} className="toolbar">
         <input
           placeholder="Title"
@@ -58,8 +76,8 @@ export default function CorrectiveActionsPanel({ token }) {
         <button type="submit" className="btn-primary">Add CAPA</button>
         <ExportCsvButton token={token} path="/corrective-actions/" filename="corrective-actions.csv" />
       </form>
-      {actions.length === 0 ? (
-        <p className="empty-state">No corrective actions yet.</p>
+      {visibleActions.length === 0 ? (
+        <p className="empty-state">{statusFilter ? 'No corrective actions match this filter.' : 'No corrective actions yet.'}</p>
       ) : (
         <table>
           <thead>
@@ -74,7 +92,7 @@ export default function CorrectiveActionsPanel({ token }) {
             </tr>
           </thead>
           <tbody>
-            {actions.map((a) => (
+            {visibleActions.map((a) => (
               editingId === a.id ? (
                 <tr key={a.id}>
                   <td>

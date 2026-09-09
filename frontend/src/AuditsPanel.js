@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import useCrudPanel from './useCrudPanel'
 import StatusBadge from './StatusBadge'
 import ExportCsvButton from './ExportCsvButton'
@@ -7,13 +7,23 @@ const TYPE_OPTIONS = ['internal', 'external', 'certification']
 const STATUS_OPTIONS = ['planned', 'in_progress', 'completed', 'cancelled']
 const EMPTY_FORM = { title: '', scope: '', audit_type: 'internal' }
 
-export default function AuditsPanel({ token }) {
+export default function AuditsPanel({ token, initialFilter, onConsumeFilter }) {
+  // Seeded from a Dashboard "Audits by status" drill-down click.
+  const [statusFilter, setStatusFilter] = useState((initialFilter && initialFilter.status) || '')
   const {
     items: audits, error, form, setForm, create,
     editingId, editForm, setEditForm, startEdit, cancelEdit, saveEdit, remove,
   } = useCrudPanel('/audits/', token, EMPTY_FORM)
 
+  useEffect(() => {
+    if (initialFilter && onConsumeFilter) onConsumeFilter()
+    // Once on mount only — see statusFilter's own initializer above.
+    // eslint-disable-next-line
+  }, [])
+
   if (!token) return <p className="empty-state">Set a token above to view audits.</p>
+
+  const visibleAudits = statusFilter ? audits.filter((a) => a.status === statusFilter) : audits
 
   return (
     <div>
@@ -21,6 +31,14 @@ export default function AuditsPanel({ token }) {
       <p className="panel-hint">
         Creating or editing an audit requires the "admin" or "auditor" role in this tenant (or superuser).
       </p>
+      {statusFilter && (
+        <p className="panel-hint">
+          Showing only <strong>{statusFilter.replace(/_/g, ' ')}</strong> audits —{' '}
+          <button type="button" onClick={() => setStatusFilter('')} style={{ padding: '2px 8px' }}>
+            clear filter
+          </button>
+        </p>
+      )}
       <form onSubmit={(e) => { e.preventDefault(); create() }} className="toolbar">
         <input
           placeholder="Title"
@@ -34,8 +52,8 @@ export default function AuditsPanel({ token }) {
         <button type="submit" className="btn-primary">Add Audit</button>
         <ExportCsvButton token={token} path="/audits/" filename="audits.csv" />
       </form>
-      {audits.length === 0 ? (
-        <p className="empty-state">No audits yet.</p>
+      {visibleAudits.length === 0 ? (
+        <p className="empty-state">{statusFilter ? 'No audits match this filter.' : 'No audits yet.'}</p>
       ) : (
         <table>
           <thead>
@@ -50,7 +68,7 @@ export default function AuditsPanel({ token }) {
             </tr>
           </thead>
           <tbody>
-            {audits.map((a) => (
+            {visibleAudits.map((a) => (
               editingId === a.id ? (
                 <tr key={a.id}>
                   <td>

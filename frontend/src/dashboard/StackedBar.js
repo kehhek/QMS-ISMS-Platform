@@ -7,7 +7,12 @@ import React, { useState } from 'react'
 // is its own hover/focus hit target (the mark itself, no crosshair needed
 // for a bar), so hovering or tabbing to a segment surfaces its exact value
 // even when the segment is too narrow for an inline label.
-export default function StackedBar({ segments, height = 20 }) {
+// `onSegmentClick(segment)` is optional — when given, every segment
+// becomes a real click/keyboard target (drilling into that status
+// elsewhere in the app) on top of its existing hover tooltip; omit it
+// and a segment stays the inert, hover-only role="img" mark it always
+// was.
+export default function StackedBar({ segments, height = 20, onSegmentClick }) {
   const [hovered, setHovered] = useState(null)
   const total = segments.reduce((sum, s) => sum + s.value, 0)
   const visible = segments.filter((s) => s.value > 0)
@@ -26,7 +31,7 @@ export default function StackedBar({ segments, height = 20 }) {
           return (
             <div
               key={s.label}
-              className="stacked-bar-segment"
+              className={`stacked-bar-segment${onSegmentClick ? ' stacked-bar-segment-clickable' : ''}`}
               style={{
                 width: `${pct}%`,
                 background: s.color,
@@ -36,12 +41,18 @@ export default function StackedBar({ segments, height = 20 }) {
                 borderBottomRightRadius: isLast ? 4 : 0,
               }}
               tabIndex={0}
-              role="img"
-              aria-label={`${s.label}: ${s.value} of ${total}`}
+              role={onSegmentClick ? 'button' : 'img'}
+              aria-label={
+                onSegmentClick ? `View ${s.label} (${s.value} of ${total})` : `${s.label}: ${s.value} of ${total}`
+              }
               onMouseEnter={() => setHovered(s)}
               onMouseLeave={() => setHovered(null)}
               onFocus={() => setHovered(s)}
               onBlur={() => setHovered(null)}
+              onClick={onSegmentClick ? () => onSegmentClick(s) : undefined}
+              onKeyDown={onSegmentClick ? (e) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSegmentClick(s) }
+              } : undefined}
             >
               {/* Only label inline when it actually fits — a clipped or
                   overflowing label is worse than none; the tooltip below

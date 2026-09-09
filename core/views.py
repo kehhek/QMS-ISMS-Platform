@@ -721,6 +721,12 @@ class ControlViewSet(CsvExportMixin, AuditLoggingMixin, viewsets.ModelViewSet):
         framework = self.request.query_params.get('framework')
         if framework:
             qs = qs.filter(framework=framework)
+        # Lets the dashboard's per-framework "controls by status" chart
+        # link straight to the matching, already-filtered list — plain
+        # equality against Control.Status, same pattern as `framework`.
+        status_param = self.request.query_params.get('status')
+        if status_param:
+            qs = qs.filter(status=status_param)
         return qs
 
     @action(detail=False, methods=['post'], url_path='seed-framework')
@@ -1528,6 +1534,13 @@ class DashboardSummaryView(APIView):
             'audits': self._counts_by(Audit.objects.all(), 'status'),
             'corrective_actions': self._counts_by(CorrectiveAction.objects.all(), 'status'),
             'incidents': self._counts_by(Incident.objects.all(), 'severity'),
+            # Separate from 'incidents' above (that one is keyed by
+            # severity, for the "by severity" chart) — this is keyed by
+            # Incident.Status, so "open incidents" can actually be
+            # computed from real status values instead of ones that only
+            # exist in the severity breakdown and are always absent
+            # (a bug: every incident silently counted as open, forever).
+            'incidents_by_status': self._counts_by(Incident.objects.all(), 'status'),
             'controls': controls_by_framework,
             'pending_approvals': WorkflowStep.objects.filter(status=WorkflowStep.Status.PENDING).count(),
             'totals': {

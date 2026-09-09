@@ -749,6 +749,87 @@ tbody tr:last-child td {
   color: var(--color-text-muted);
 }
 
+/* Dashboard: Argon Dashboard-styled header band + overlapping stat
+   cards. Scoped to the Dashboard tab only (dashboard-header-band/
+   dashboard-stat-row/stat-tile-argon aren't used anywhere else) — this
+   is a deliberate one-tab visual experiment, not a site-wide palette
+   change, so it keeps Argon's own signature navy/purple gradient
+   tokens rather than this app's established orange/green brand colors.
+   The actual chart colors (StackedBar/Legend) are untouched — those are
+   the WCAG/CVD-validated palette from earlier and aren't part of this. */
+.dashboard-header-band {
+  background: linear-gradient(87deg, #172b4d 0%, #1a174d 100%);
+  border-radius: 16px;
+  padding: 28px 24px 64px;
+}
+
+.dashboard-header-eyebrow {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* Pulls the stat cards up onto the bottom of the gradient band, so they
+   float half on / half off it (Argon's signature card-overlap). */
+.dashboard-stat-row {
+  margin-top: -48px;
+  position: relative;
+  z-index: 1;
+}
+
+.stat-tile.stat-tile-argon {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--color-surface);
+  border: none;
+  border-radius: 12px;
+  padding: 18px 20px;
+  box-shadow: 0 0 2rem 0 rgba(136, 152, 170, 0.2);
+}
+
+.stat-tile-argon.stat-tile-clickable:hover {
+  box-shadow: 0 4px 2rem 0 rgba(136, 152, 170, 0.3);
+  transform: translateY(-1px);
+}
+
+.stat-tile-argon .stat-tile-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #8898aa;
+  margin: 0 0 4px;
+}
+
+.stat-tile-argon .stat-tile-value {
+  font-size: 22px;
+  color: #172b4d;
+}
+
+.stat-tile-icon {
+  flex-shrink: 0;
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  color: #fff;
+}
+
+.stat-tile-icon-primary { background: linear-gradient(87deg, #5e72e4 0, #825ee4 100%); }
+.stat-tile-icon-info    { background: linear-gradient(87deg, #11cdef 0, #1171ef 100%); }
+.stat-tile-icon-success { background: linear-gradient(87deg, #2dce89 0, #2dcecc 100%); }
+.stat-tile-icon-warning { background: linear-gradient(87deg, #fb6340 0, #fbb140 100%); }
+.stat-tile-icon-danger  { background: linear-gradient(87deg, #f5365c 0, #f56036 100%); }
+.stat-tile-icon-dark    { background: linear-gradient(87deg, #212529 0, #172b4d 100%); }
+
 /* Dashboard: stat tiles */
 .stat-row {
   display: grid;
@@ -818,9 +899,13 @@ tbody tr:last-child td {
 
 .dashboard-card {
   background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  padding: 16px;
+  /* Argon-style card: no border, a soft diffuse shadow carries the edge
+     instead (same shadow recipe as .stat-tile-argon above, for one
+     consistent "card" language across the whole tab). */
+  border: none;
+  border-radius: 12px;
+  box-shadow: 0 0 2rem 0 rgba(136, 152, 170, 0.15);
+  padding: 20px;
   /* A grid item's intrinsic min-width defaults to the width its content
      needs (not 0), so a table too wide for this card — e.g. the ISMS
      calendar's actions column — either force-expands the card's own
@@ -833,10 +918,12 @@ tbody tr:last-child td {
 }
 
 .dashboard-card h4 {
-  margin: 0 0 12px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--color-text);
+  margin: 0 0 16px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #8898aa;
 }
 
 .stacked-bar-wrap {
@@ -867,6 +954,10 @@ tbody tr:last-child td {
 .stacked-bar-segment:hover,
 .stacked-bar-segment:focus-visible {
   filter: brightness(0.92);
+}
+
+.stacked-bar-segment-clickable {
+  cursor: pointer;
 }
 
 .stacked-bar-inline-label {
@@ -912,6 +1003,23 @@ tbody tr:last-child td {
   font-size: 11px;
   color: var(--color-text-muted);
   text-transform: capitalize;
+}
+
+/* A legend row that also drills into that status elsewhere in the app
+   (see DashboardPanel's onNavigate) — same font/color contract as a
+   plain legend item above, just reset back from real <button> chrome
+   and given a hover cue. */
+.chart-legend-item-clickable {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.chart-legend-item-clickable:hover {
+  color: var(--color-primary-text);
+  text-decoration: underline;
 }
 
 .chart-legend-swatch {

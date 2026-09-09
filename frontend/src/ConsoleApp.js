@@ -82,7 +82,19 @@ export default function ConsoleApp() {
   const [token, setToken] = useState(readStoredToken)
   const [activeKey, setActiveKey] = useState('dashboard')
   const [profile, setProfile] = useState(null)
+  // A dashboard drill-down (click a stat tile / chart segment) switches
+  // tabs AND seeds that tab's own status filter — see DashboardPanel's
+  // onNavigate and each target panel's initialFilter/onConsumeFilter
+  // handling. Cleared as soon as the destination panel reads it, so
+  // navigating back to that tab later via the sidebar doesn't silently
+  // reapply a stale filter from an old click.
+  const [pendingFilter, setPendingFilter] = useState(null)
   const navigate = useNavigate()
+
+  const navigateWithFilter = (tabKey, filter) => {
+    setActiveKey(tabKey)
+    setPendingFilter(filter)
+  }
 
   const handleLogin = (newToken) => {
     setToken(newToken)
@@ -177,7 +189,12 @@ export default function ConsoleApp() {
           </div>
         </div>
         <div className="panel">
-          <ActiveComponent token={token} isAdmin={isAdmin} />
+          <ActiveComponent
+            token={token} isAdmin={isAdmin}
+            onNavigate={navigateWithFilter}
+            initialFilter={pendingFilter}
+            onConsumeFilter={() => setPendingFilter(null)}
+          />
         </div>
       </div>
     </div>

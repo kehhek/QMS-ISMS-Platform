@@ -33,7 +33,8 @@ class DashboardSummaryTests(TestCase):
             Control.objects.create(framework=Control.Framework.ISO27001, identifier='A.2', name='y', status=Control.Status.NOT_IMPLEMENTED)
             Control.objects.create(framework=Control.Framework.SOC2, identifier='CC1.1', name='z', status=Control.Status.PARTIAL)
 
-            Incident.objects.create(title='I1', severity=Incident.Severity.HIGH)
+            Incident.objects.create(title='I1', severity=Incident.Severity.HIGH, status=Incident.Status.OPEN)
+            Incident.objects.create(title='I2', severity=Incident.Severity.LOW, status=Incident.Status.CLOSED)
 
         api = APIClient()
         api.force_authenticate(user=user)
@@ -47,4 +48,13 @@ class DashboardSummaryTests(TestCase):
         self.assertEqual(data['controls']['iso27001'], {'implemented': 1, 'not_implemented': 1})
         self.assertEqual(data['controls']['soc2'], {'partial': 1})
         self.assertEqual(data['totals']['controls'], 3)
-        self.assertEqual(data['incidents'], {'high': 1})
+        self.assertEqual(data['incidents'], {'high': 1, 'low': 1})
+        # Regression test: 'incidents' is keyed by severity, not status —
+        # a closed incident must show up as closed in the STATUS
+        # breakdown so the dashboard's "open incidents" count can
+        # actually exclude it (see DashboardPanel.js's openIncidents,
+        # which used to read .resolved/.closed off this severity-keyed
+        # object and always get undefined, i.e. never actually excluding
+        # anything).
+        self.assertEqual(data['incidents_by_status'], {'open': 1, 'closed': 1})
+        self.assertEqual(data['totals']['incidents'], 2)

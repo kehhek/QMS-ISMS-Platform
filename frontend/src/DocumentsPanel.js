@@ -105,7 +105,7 @@ function PersonSelect({ value, onChange, members, allowNone }) {
   )
 }
 
-export default function DocumentsPanel({ token, category = 'general' }) {
+export default function DocumentsPanel({ token, category = 'general', initialFilter, onConsumeFilter }) {
   const copy = CATEGORY_COPY[category] || CATEGORY_COPY.general
   const [documents, setDocuments] = useState([])
   const [members, setMembers] = useState([])
@@ -116,10 +116,19 @@ export default function DocumentsPanel({ token, category = 'general' }) {
   const [editForm, setEditForm] = useState(null)
   const [replaceFileId, setReplaceFileId] = useState(null)
   const [replaceFile, setReplaceFile] = useState(null)
-  const [statusFilter, setStatusFilter] = useState('')
+  // Seeded from a Dashboard drill-down click (that chart spans every
+  // document category — see DashboardSummaryView — so this only lands
+  // on whichever category tab is actually open, "General" by default).
+  const [statusFilter, setStatusFilter] = useState((initialFilter && initialFilter.status) || '')
   const [statusCounts, setStatusCounts] = useState(null)
   const [workflows, setWorkflows] = useState([])
   const [reviewRoleChoice, setReviewRoleChoice] = useState({}) // {[documentId]: approver_role}
+
+  useEffect(() => {
+    if (initialFilter && onConsumeFilter) onConsumeFilter()
+    // Once on mount only — see statusFilter's own initializer above.
+    // eslint-disable-next-line
+  }, [])
 
   const load = () => {
     const query = statusFilter ? `&status=${statusFilter}` : ''

@@ -7,8 +7,10 @@ import StatusBadge from './StatusBadge'
 const STATUS_OPTIONS = ['open', 'mitigating', 'closed']
 const EMPTY_FORM = { name: '', description: '', likelihood: 1, impact: 1, asset: '' }
 
-export default function RisksPanel({ token }) {
+export default function RisksPanel({ token, initialFilter, onConsumeFilter }) {
   const [assets, setAssets] = useState([])
+  // Seeded from a Dashboard "Risks by status" drill-down click.
+  const [statusFilter, setStatusFilter] = useState((initialFilter && initialFilter.status) || '')
   const {
     items: risks, error, form, setForm, create,
     editingId, editForm, setEditForm, startEdit, cancelEdit, saveEdit, remove,
@@ -19,6 +21,12 @@ export default function RisksPanel({ token }) {
     apiFetch('/assets/', token).then((data) => setAssets(unwrapList(data))).catch(() => setAssets([]))
   }, [token])
 
+  useEffect(() => {
+    if (initialFilter && onConsumeFilter) onConsumeFilter()
+    // Once on mount only — see statusFilter's own initializer above.
+    // eslint-disable-next-line
+  }, [])
+
   const submitCreate = (e) => {
     e.preventDefault()
     create({ ...form, asset: form.asset || null })
@@ -26,9 +34,19 @@ export default function RisksPanel({ token }) {
 
   if (!token) return <p className="empty-state">Set a token above to view risks.</p>
 
+  const visibleRisks = statusFilter ? risks.filter((r) => r.status === statusFilter) : risks
+
   return (
     <div>
       {error && <p className="error-text">{error}</p>}
+      {statusFilter && (
+        <p className="panel-hint">
+          Showing only <strong>{statusFilter.replace(/_/g, ' ')}</strong> risks —{' '}
+          <button type="button" onClick={() => setStatusFilter('')} style={{ padding: '2px 8px' }}>
+            clear filter
+          </button>
+        </p>
+      )}
       <form onSubmit={submitCreate} className="toolbar">
         <input
           placeholder="Name"
@@ -61,8 +79,8 @@ export default function RisksPanel({ token }) {
         <button type="submit" className="btn-primary">Add Risk</button>
         <ExportCsvButton token={token} path="/risks/" filename="risks.csv" />
       </form>
-      {risks.length === 0 ? (
-        <p className="empty-state">No risks yet.</p>
+      {visibleRisks.length === 0 ? (
+        <p className="empty-state">{statusFilter ? 'No risks match this filter.' : 'No risks yet.'}</p>
       ) : (
         <table>
           <thead>
@@ -78,7 +96,7 @@ export default function RisksPanel({ token }) {
             </tr>
           </thead>
           <tbody>
-            {risks.map((r) => (
+            {visibleRisks.map((r) => (
               editingId === r.id ? (
                 <tr key={r.id}>
                   <td>

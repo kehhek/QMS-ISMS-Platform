@@ -299,25 +299,40 @@ function ControlAttachments({ token, control, contentTypeId }) {
   )
 }
 
-export default function ControlsPanel({ token }) {
+export default function ControlsPanel({ token, initialFilter, onConsumeFilter }) {
   const [page, setPage] = useState(null) // raw paginated response
-  const [framework, setFramework] = useState('')
+  // Both seeded from a Dashboard "ISO 27001/SOC 2 controls" drill-down
+  // click — that chart is already per-framework, so the click carries
+  // both which framework and which implementation status.
+  const [framework, setFramework] = useState((initialFilter && initialFilter.framework) || '')
+  const [statusFilter, setStatusFilter] = useState((initialFilter && initialFilter.status) || '')
   const [error, setError] = useState(null)
   const [controlContentTypeId, setControlContentTypeId] = useState(null)
   const [expandedId, setExpandedId] = useState(null)
   const [mappingsId, setMappingsId] = useState(null)
 
   const load = (url) => {
-    const req = url
-      ? apiFetchUrl(url, token)
-      : apiFetch(`/controls/${framework ? `?framework=${framework}` : ''}`, token)
-    req.then(setPage).catch((err) => setError(err.message))
+    if (url) {
+      apiFetchUrl(url, token).then(setPage).catch((err) => setError(err.message))
+      return
+    }
+    const params = new URLSearchParams()
+    if (framework) params.set('framework', framework)
+    if (statusFilter) params.set('status', statusFilter)
+    const query = params.toString()
+    apiFetch(`/controls/${query ? `?${query}` : ''}`, token).then(setPage).catch((err) => setError(err.message))
   }
 
   useEffect(() => {
     if (token) load()
     // eslint-disable-next-line
-  }, [token, framework])
+  }, [token, framework, statusFilter])
+
+  useEffect(() => {
+    if (initialFilter && onConsumeFilter) onConsumeFilter()
+    // Once on mount only — see framework/statusFilter's own initializers above.
+    // eslint-disable-next-line
+  }, [])
 
   useEffect(() => {
     if (!token) return
@@ -373,6 +388,20 @@ export default function ControlsPanel({ token }) {
       </p>
 
       <FrameworkCoverage token={token} onSeeded={load} />
+
+      {statusFilter && (
+        <p className="panel-hint">
+          Showing only <strong>{statusFilter.replace(/_/g, ' ')}</strong>
+          {framework ? <> {FRAMEWORK_LABELS[framework] || framework}</> : ''} controls —{' '}
+          <button
+            type="button"
+            onClick={() => { setStatusFilter(''); setFramework('') }}
+            style={{ padding: '2px 8px' }}
+          >
+            clear filter
+          </button>
+        </p>
+      )}
 
       <div className="toolbar">
         <span className="field-label">Framework:</span>
